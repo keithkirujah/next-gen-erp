@@ -4017,10 +4017,17 @@ class App(QMainWindow):
         dlg=QDialog(self); dlg.setWindowTitle("Activity audit log"); dlg.resize(1050,600)
         root=QVBoxLayout(dlg); table=QTableWidget(0,7)
         table.setHorizontalHeaderLabels(["ID","USER","ROLE","ACTION","ENTITY","DETAILS","TIMESTAMP"])
-        rows=self.store.operations.conn.execute("SELECT * FROM audit_events ORDER BY id DESC LIMIT 1000").fetchall()
+        audit_rows=self.store.operations.conn.execute("SELECT * FROM audit_events ORDER BY id DESC LIMIT 1000").fetchall()
+        try:
+            legacy_rows=self.store.conn.execute("SELECT username,action,details,created_at FROM activity ORDER BY id DESC LIMIT 1000").fetchall()
+        except Exception:
+            legacy_rows=[]
+        rows=[(r["id"],r["username"],r["role"],r["action"],r["entity_type"],r["details"],r["created_at"]) for r in audit_rows]
+        rows += [(f"legacy-{r['created_at']}",r["username"],"—",r["action"],"activity",r["details"],r["created_at"]) for r in legacy_rows]
+        rows.sort(key=lambda x:str(x[6]),reverse=True)
         table.setRowCount(len(rows))
         for i,r in enumerate(rows):
-            for j,val in enumerate([r["id"],r["username"],r["role"],r["action"],r["entity_type"],r["details"],r["created_at"]]):
+            for j,val in enumerate(r):
                 table.setItem(i,j,QTableWidgetItem(str(val)))
         table.horizontalHeader().setSectionResizeMode(5,QHeaderView.Stretch)
         table.setAlternatingRowColors(True); root.addWidget(table)
