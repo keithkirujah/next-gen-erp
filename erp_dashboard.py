@@ -1445,8 +1445,11 @@ class DashboardView(QScrollArea):
                 ("⚒", "Repairs", "Repair Tickets", "orange", "Service jobs"),
                 ("▤", "Reports", "Reports", "cyan", "Business reports"),
                 ("◎", "Customers", "CRM", "pink", "Customer list")]
-        allowed = set(allowed_modules or ())
-        if allowed:
+        # None means the dashboard was instantiated without a permission filter.
+        # An explicitly empty set means the role has no destinations: never show
+        # quick actions that would lead to inaccessible pages.
+        allowed = set(allowed_modules) if allowed_modules is not None else None
+        if allowed is not None:
             defs = [item for item in defs if item[2] in allowed]
         self.tiles = []
         for i, (g, t, tg, c, h) in enumerate(defs):
