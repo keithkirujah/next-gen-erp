@@ -44,3 +44,14 @@ Use **Database & Backup** for full package export/import. See `SECURITY_AND_DATA
 - Partial repayments are recorded to the cashbook. Full repayment marks the lending obligation as settled while the product remains with the customer; receiving the product back closes the return side of the loan.
 - A good-condition return that clears an unpaid balance requires Manager/Admin approval. Damaged or incomplete returns are recorded without returning the item to sellable stock; any remaining balance stays on the customer's account.
 - Loan issue/return stock movements, payments, approvals and audit events are stored locally and queued for sync when the system's sync service is configured.
+
+
+## Guided first-run experience
+- After the first successful sign-in, the desktop app opens a step-by-step walkthrough of enabled business workspaces, with role-aware guidance.
+- The tour can be skipped immediately and replayed at any time from **Guided tour** in the top bar.
+- Tour completion is stored locally; closing the tour without choosing Skip leaves it available on the next launch.
+
+## Product Lending Centre experience
+- Searchable lending register with status filters, exposure KPIs, selected-agreement details and an activity timeline.
+- Live issue preview displays the customer's shared available credit and the current employee's per-transaction authority before confirmation.
+- Repayment and return dialogs explain financial and stock consequences before saving.
