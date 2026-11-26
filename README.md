@@ -20,3 +20,17 @@ Offline-first. Not a website.
 
 ## Data safety
 Use **Database & Backup** for full package export/import. See `SECURITY_AND_DATA_PORTABILITY.md`.
+
+
+## Retail Super Upgrade (development branch)
+
+- Customer credit facilities: Admin can enable credit per registered customer, set an individual KES limit and repayment terms. POS credit sales are blocked for walk-ins, disabled facilities and limit overruns.
+- Customer negotiated pricing: Admin/Manager can double-click a cart item's unit-price cell to override its price. A reason is required and recorded in the audit events. Catalogue price is unchanged.
+- Audit events: customer credit configuration, cart overrides, sales, repayments and returns are recorded with actor, role, timestamp and detail. Admin can view the audit log from Customers/CRM.
+- Returns: audit event captures return/refund amount and reason. Existing return processing can restore stock and refund through a chosen payment method.
+- Credit due dates are stored for sales based on customer terms where enabled.
+- Theme switch preserves loaded page widgets to reduce rebuilding and visual lag.
+- Project SVG logo is in `assets/nextgen-erp-mark.svg` and is set as the desktop application icon where Qt supports SVG icons.
+- Windows launcher creates a local `.venv`, so unrelated global Python packages and their dependency warnings do not affect the ERP.
+
+**Development branch:** `feature/retail-super-upgrades`. This is not yet merged to `main`; test on a copied database before adopting it.
