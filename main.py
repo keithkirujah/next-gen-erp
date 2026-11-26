@@ -4,7 +4,7 @@ from pathlib import Path
 from datetime import datetime
 from decimal import Decimal
 from PySide6.QtCore import Qt, QSize, QTimer, QRectF, QPointF, QUrl, QDate, QTime, QThread, Signal, QObject, QEvent, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QShortcut, QKeySequence, QPixmap, QColor, QFont, QPainter, QPen, QBrush, QLinearGradient, QAction, QTextDocument, QPageSize, QDesktopServices
+from PySide6.QtGui import QShortcut, QKeySequence, QPixmap, QColor, QFont, QPainter, QPen, QBrush, QLinearGradient, QAction, QTextDocument, QPageSize, QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QLineEdit, QFrame, QStackedWidget, QTableWidget, QTableWidgetItem,
@@ -7061,6 +7061,8 @@ class ButtonCursorFilter(QObject):
 def main():
     setup_logging(APP_DIR)
     app=QApplication(sys.argv); app.setApplicationName(APP_NAME); app.setStyle("Fusion")
+    brand_icon=Path(__file__).resolve().parent/"assets"/"nextgen-erp-mark.svg"
+    if brand_icon.exists(): app.setWindowIcon(QIcon(str(brand_icon)))
     def crash_dialog(summary, log_path):
         QMessageBox.critical(None,"NextGen ERP hit a problem",
             f"Something unexpected happened:\n\n{summary[:300]}\n\nYour saved data is safe and Real-time Backups are unaffected. "
