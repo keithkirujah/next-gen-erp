@@ -122,6 +122,7 @@ MODULE_DEPENDENCIES = {
     "Classes & Timetable": ("Students & Enrolment",),
     "Library": ("Students & Enrolment",),
     "Point of Sale": ("Sales",),
+    "Product Lending": ("Inventory", "CRM"),
     "Returns Desk": ("Sales",),
     "Job Cards": ("Projects", "CRM"),
     "Fleet & Assets": ("Projects",),
@@ -154,9 +155,9 @@ def _role(name, template, modules, description=""):
 
 
 # Shared retail-ish module sets
-_RETAIL = ("Sales", "Point of Sale", "Returns Desk", "Purchases", "Inventory", "Finance", "CRM", "Reports")
+_RETAIL = ("Sales", "Point of Sale", "Returns Desk", "Purchases", "Inventory", "Finance", "CRM", "Reports", "Product Lending")
 _RETAIL_HR = _RETAIL + ("HR & Payroll",)
-_REPAIR = ("Sales", "Point of Sale", "Returns Desk", "Purchases", "Inventory", "Finance", "CRM", "Reports", "Repair Tickets")
+_REPAIR = ("Sales", "Point of Sale", "Returns Desk", "Purchases", "Inventory", "Finance", "CRM", "Reports", "Repair Tickets", "Product Lending")
 _SCHOOL = (
     "Finance", "HR & Payroll", "CRM", "Projects", "Reports",
     "Students & Enrolment", "Fees & Billing", "Classes & Timetable", "Library",
@@ -174,7 +175,7 @@ BUSINESS_PROFILES = {
         {},
         roles=(
             _role("Manager", "Manager", ALL_MODULES, "Runs day-to-day operations"),
-            _role("Staff", "Staff", ("Sales", "Point of Sale", "Returns Desk", "Inventory", "CRM"), "Floor, till and data entry"),
+            _role("Staff", "Staff", ("Sales", "Point of Sale", "Returns Desk", "Inventory", "CRM", "Product Lending"), "Floor, till and data entry"),
             _role("Accountant", "Manager", ("Finance", "Reports", "Sales", "Purchases"), "Books and compliance"),
             _role("Cashier", "Staff", ("Point of Sale", "Sales", "Returns Desk"), "Till only"),
         ),
@@ -187,7 +188,7 @@ BUSINESS_PROFILES = {
         {"Batches & Expiry": BATCHES},
         roles=(
             _role("Store Manager", "Manager", _RETAIL + ("Batches & Expiry", "HR & Payroll"), "Full store control"),
-            _role("Supervisor", "Manager", ("Sales", "Point of Sale", "Returns Desk", "Inventory", "Reports"), "Floor supervision"),
+            _role("Supervisor", "Manager", ("Sales", "Point of Sale", "Returns Desk", "Inventory", "Reports", "Product Lending"), "Floor supervision"),
             _role("Cashier", "Staff", ("Point of Sale", "Sales", "Returns Desk"), "Checkout"),
             _role("Stock Clerk", "Staff", ("Inventory", "Purchases", "Batches & Expiry"), "Receiving and shelves"),
             _role("Accountant", "Manager", ("Finance", "Reports", "Purchases", "Sales"), "Cash-up and books"),
@@ -202,7 +203,7 @@ BUSINESS_PROFILES = {
         roles=(
             _role("Service Manager", "Manager", _REPAIR + ("HR & Payroll", "Projects"), "Workshop and counter"),
             _role("Technician", "Staff", ("Repair Tickets", "Inventory", "CRM"), "Bench work"),
-            _role("Front Desk", "Staff", ("Sales", "Point of Sale", "CRM", "Repair Tickets"), "Customer intake"),
+            _role("Front Desk", "Staff", ("Sales", "Point of Sale", "CRM", "Repair Tickets", "Product Lending"), "Customer intake"),
             _role("Parts Clerk", "Staff", ("Inventory", "Purchases"), "Spares"),
             _role("Cashier", "Staff", ("Point of Sale", "Sales", "Returns Desk"), "Payments"),
             _role("Accountant", "Manager", ("Finance", "Reports", "Sales", "Purchases"), "Accounts"),
@@ -216,8 +217,8 @@ BUSINESS_PROFILES = {
         {},
         roles=(
             _role("Store Manager", "Manager", _RETAIL_HR, "Store lead"),
-            _role("Sales Associate", "Staff", ("Sales", "Point of Sale", "Inventory", "CRM"), "Selling floor"),
-            _role("Cashier", "Staff", ("Point of Sale", "Sales", "Returns Desk"), "Till"),
+            _role("Sales Associate", "Staff", ("Sales", "Point of Sale", "Inventory", "CRM", "Product Lending"), "Selling floor"),
+            _role("Cashier", "Staff", ("Point of Sale", "Sales", "Returns Desk", "Product Lending"), "Till"),
             _role("Stock Clerk", "Staff", ("Inventory", "Purchases"), "Warehouse"),
             _role("Accountant", "Manager", ("Finance", "Reports"), "Finance"),
         ),
@@ -231,7 +232,7 @@ BUSINESS_PROFILES = {
         roles=(
             _role("Manager", "Manager", _RETAIL, "Owner/manager"),
             _role("Cashier", "Staff", ("Point of Sale", "Sales", "Returns Desk"), "Till"),
-            _role("Shop Assistant", "Staff", ("Sales", "Inventory", "CRM"), "Floor"),
+            _role("Shop Assistant", "Staff", ("Sales", "Inventory", "CRM", "Product Lending"), "Floor"),
             _role("Accountant", "Manager", ("Finance", "Reports", "Purchases"), "Books"),
         ),
         pos_recommended=True,
