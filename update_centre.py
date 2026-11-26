@@ -65,7 +65,7 @@ class UpdateCentreDialog(QDialog):
         except Exception as exc: QMessageBox.critical(self,"Package rejected",str(exc)); self.install.setEnabled(False); return
         self.verified=(manifest,verified); self.files.clear(); self.files.addItem(f"Version {manifest.get('version')} · {len(verified)} file(s)")
         for rel,_ in verified:self.files.addItem(" • "+rel)
-        self.notes.setPlainText(notes or "No release notes supplied."); self.status.setText("Package verified — hashes passed. Review before installation."); self.install.setEnabled(True)
+        self.notes.setPlainText(notes or "No release notes supplied."); self.status.setText("Hashes passed (package source is not digitally authenticated). Review before installation."); self.install.setEnabled(True)
     def install_package(self):
         if not self.verified:return
         manifest,files=self.verified
