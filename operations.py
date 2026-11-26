@@ -1005,7 +1005,10 @@ class OperationsService:
         if since: clauses.append("created_at>=?"); params.append(str(since))
         rows=self.conn.execute(f"SELECT total,paid_total,created_at FROM sales WHERE {' AND '.join(clauses)}",params).fetchall()
         granted=sum((max(Decimal(str(r["total"]))-Decimal(str(r["paid_total"])),Decimal("0")) for r in rows),Decimal("0"))
-        paidrows=self.conn.execute("SELECT amount,created_at FROM customer_payments WHERE 1=1"+(" AND customer_id=?" if customer_id is not None else "")+(" AND created_at>=?" if since else ""),([int(customer_id)] if customer_id is not None else [])+([str(since)] if since else [])).fetchall()
+        paid_clauses=["source_type='customer_payment'"]; paid_params=[]
+        if customer_id is not None: paid_clauses.append("source_id=?"); paid_params.append(int(customer_id))
+        if since: paid_clauses.append("created_at>=?"); paid_params.append(str(since))
+        paidrows=self.conn.execute("SELECT amount,created_at FROM cash_entries WHERE "+ " AND ".join(paid_clauses),paid_params).fetchall()
         repaid=sum((Decimal(str(r["amount"])) for r in paidrows),Decimal("0"))
         return {"credit_extended":granted.quantize(Decimal("0.01")),"repaid":repaid.quantize(Decimal("0.01"))}
 
@@ -2617,6 +2620,7 @@ class OperationsService:
                 (self._money(value), "customer_payment", customer_id or 0, desc, timestamp,
                  payment_method, payment_reference, "Customer receipt")
             ).lastrowid
+            self.audit_event("Customer payment recorded","customer",customer_id,f"{customer_name}: KES {self._money(value)} via {payment_method}; allocated={self._money(allocated)}; unallocated={self._money(remaining)}")
             self._enqueue("cash_entries", cash_id, {
                 "id": cash_id, "direction": "in", "amount": self._money(value),
                 "source_type": "customer_payment", "customer_name": customer_name,
