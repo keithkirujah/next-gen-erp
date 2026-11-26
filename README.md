@@ -92,3 +92,8 @@ Only application files are permitted; database and user data paths are explicitl
 ## Experience and performance
 
 The ongoing Experience Upgrade prioritizes a premium interface without sacrificing speed. Decorative motion and continuous effects are off by default; see [PERFORMANCE_AND_UX.md](PERFORMANCE_AND_UX.md) for performance budgets and UX principles.
+
+
+## Windows CI build downloads
+
+Every push to the development branch runs Windows validation (Python compile check, dependency check, and PyInstaller build). Successful runs now attach a portable **NextGen-ERP-Windows** ZIP artifact to the run page. Open [GitHub Actions](https://github.com/keithkirujah/next-gen-erp/actions), choose a successful **Windows validation and package** run, then download its artifact. Artifacts are retained for 14 days and are test builds—not signed production releases.
