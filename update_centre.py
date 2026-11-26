@@ -78,9 +78,19 @@ class UpdateCentreDialog(QDialog):
             backup=Path(os.getenv("APPDATA",str(Path.home())))/"NextGenERP"/"update_backups"/("backup_"+str(manifest["version"])+"_"+__import__("datetime").datetime.now().strftime("%Y%m%d_%H%M%S"))
             pairs=[(payload/rel,self.app_root/rel,backup/rel) for rel,_ in files]
             cmd=["@echo off","setlocal","timeout /t 3 /nobreak >nul","mkdir "+_quote(backup)]
+            # Back up existing files; mark paths that are new so rollback removes them.
             for index,(src,dst,bak) in enumerate(pairs):
                 marker=staging/(str(index)+".new")
-                cmd += ["if exist "+_quote(bak)+" copy /y "+_quote(bak)+" "+_quote(dst)+" >nul","if exist "+_quote(marker)+" del "+_quote(dst)]
+                cmd += ["mkdir "+_quote(dst.parent),"mkdir "+_quote(bak.parent),
+                        "if exist "+_quote(dst)+" copy /y "+_quote(dst)+" "+_quote(bak)+" >nul",
+                        "if not exist "+_quote(dst)+" echo new>"+_quote(marker)]
+            for src,dst,bak in pairs:
+                cmd += ["copy /y "+_quote(src)+" "+_quote(dst)+" >nul","if errorlevel 1 goto rollback"]
+            cmd += ["start \"\" "+_quote(self.launcher),"goto done",":rollback"]
+            for index,(src,dst,bak) in enumerate(pairs):
+                marker=staging/(str(index)+".new")
+                cmd += ["if exist "+_quote(bak)+" copy /y "+_quote(bak)+" "+_quote(dst)+" >nul",
+                        "if exist "+_quote(marker)+" del "+_quote(dst)]
             cmd += ["echo Install failed; rollback attempted.>>"+_quote(staging/"update.log"),":done","endlocal"]
             script=staging/"apply_update.cmd"; script.write_text("\r\n".join(cmd),encoding="utf-8")
             subprocess.Popen(["cmd.exe","/c","start","",str(script)],creationflags=getattr(subprocess,"CREATE_NEW_CONSOLE",0))
