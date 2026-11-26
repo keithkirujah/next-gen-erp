@@ -310,6 +310,8 @@ class Store:
             self.conn.execute("ALTER TABLE sync_queue ADD COLUMN workspace_id TEXT NOT NULL DEFAULT '__global__'")
         # Employee codes for receipt privacy / served-by lines
         user_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(users)").fetchall()}
+        if "lending_limit" not in user_columns:
+            self.conn.execute("ALTER TABLE users ADD COLUMN lending_limit TEXT NOT NULL DEFAULT '0.00'")
         if "employee_code" not in user_columns:
             self.conn.execute("ALTER TABLE users ADD COLUMN employee_code TEXT NOT NULL DEFAULT ''")
             existing = self.conn.execute("SELECT id FROM users ORDER BY id").fetchall()
@@ -5734,8 +5736,9 @@ class App(QMainWindow):
         toggle=QPushButton("Enable / disable selected"); toggle.clicked.connect(self.toggle_selected_user); actions.addWidget(toggle)
         reset=QPushButton("Reset selected password"); reset.clicked.connect(self.reset_selected_user_password); actions.addWidget(reset)
         delete=QPushButton("Delete selected permanently"); delete.clicked.connect(self.delete_selected_user); actions.addWidget(delete)
+        lending=QPushButton("Set lending authority"); lending.clicked.connect(self.set_selected_lending_authority); actions.addWidget(lending)
         actions.addStretch(); v.addLayout(actions)
-        table=self._table(["ID","USERNAME","DISPLAY NAME","EMPLOYEE CODE","ROLE","ACTIVE"])
+        table=self._table(["ID","USERNAME","DISPLAY NAME","EMPLOYEE CODE","ROLE","LENDING AUTHORITY (KES)","ACTIVE"])
         # Managers never see Admin accounts — only Admin can view/manage administrators
         if self.role == "Admin":
             rows=self.store.conn.execute("SELECT * FROM users ORDER BY id").fetchall()
@@ -5744,7 +5747,7 @@ class App(QMainWindow):
         table.setRowCount(len(rows))
         for i,r in enumerate(rows):
             code = r["employee_code"] if "employee_code" in r.keys() else ""
-            for j,val in enumerate([r["id"], r["username"], r["display_name"], code or "—", r["role"], "Yes" if r["active"] else "No"]):
+            for j,val in enumerate([r["id"], r["username"], r["display_name"], code or "—", r["role"], f"KSh {Decimal(str(r['lending_limit'] or '0')):,.2f}", "Yes" if r["active"] else "No"]):
                 table.setItem(i,j,QTableWidgetItem(str(val)))
         table.setColumnHidden(0,True)
         v.addWidget(table,1)
@@ -5798,6 +5801,21 @@ class App(QMainWindow):
             QMessageBox.warning(self, "Not allowed", "Administrator accounts are only visible to Admin.")
             return None
         return row
+    def set_selected_lending_authority(self):
+        if not self._authorize("manage_users"): return
+        user=self._selected_user()
+        if not user: return
+        if user["role"]=="Admin" and self.role!="Admin":
+            QMessageBox.warning(self,"Not allowed","Only Admin can configure administrator lending authority."); return
+        current=Decimal(str(user["lending_limit"] or "0"))
+        amount,ok=QInputDialog.getDouble(self,"Staff lending authority",
+            f"Maximum value this employee may approve per product-lending transaction (KES):",
+            float(current),0,100000000,2)
+        if not ok: return
+        with self.store.conn:
+            self.store.conn.execute("UPDATE users SET lending_limit=? WHERE id=?",(f"{amount:.2f}",user["id"]))
+        self.store.log(self.username,"Changed lending authority",f"{user['username']} · KSh {amount:,.2f}")
+        self.pages.pop("User Management",None); self.show_page("User Management")
     def toggle_selected_user(self):
         if not self._authorize("manage_users"): return
         user=self._selected_user()
