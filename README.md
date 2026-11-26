@@ -55,3 +55,35 @@ Use **Database & Backup** for full package export/import. See `SECURITY_AND_DATA
 - Searchable lending register with status filters, exposure KPIs, selected-agreement details and an activity timeline.
 - Live issue preview displays the customer's shared available credit and the current employee's per-transaction authority before confirmation.
 - Repayment and return dialogs explain financial and stock consequences before saving.
+
+
+## Offline Update Centre (development branch)
+
+Open **System Settings → Update Centre** to import a full-update ZIP. The centre validates the manifest and SHA-256 hashes, shows the file list and release notes, stages the update, backs up replaced files under `%APPDATA%\\NextGenERP\\update_backups`, then closes the app and applies the package using a Windows helper script.
+
+Package layout:
+
+```
+update.zip
+├── update_manifest.json
+├── release_notes.md (optional)
+└── payload/
+    ├── main.py
+    ├── update_centre.py
+    └── assets/...
+```
+
+Manifest example:
+
+```json
+{
+  "package_type": "full_update",
+  "version": "2.0.1",
+  "files": {
+    "main.py": "<sha256 of payload/main.py>",
+    "update_centre.py": "<sha256 of payload/update_centre.py>"
+  }
+}
+```
+
+Only application files are permitted; database and user data paths are explicitly excluded. This first version supports **offline full application packages only** (not online update checks or independent module updates). Hashes detect package corruption, but do not authenticate who produced a package—only install packages from a source you trust. The updater currently performs rollback if file-copy installation fails; post-launch health-check rollback and signed packages are planned hardening work.
