@@ -389,15 +389,22 @@ class POSPage(QWidget):
         if self.pos_config.get("show_live_badge", True):
             top.addWidget(self.live_dot)
         right.addLayout(top)
-        self.customer_edit = QLineEdit(self.customer_name)
-        self.customer_edit.setPlaceholderText("Customer name")
+        customer_row=QHBoxLayout()
+        self.customer_edit=QLineEdit(self.customer_name)
+        self.customer_edit.setPlaceholderText("Customer name / walk-in")
         self.customer_edit.editingFinished.connect(self._update_customer)
-        right.addWidget(self.customer_edit)
+        customer_row.addWidget(self.customer_edit,1)
+        choose_customer=QPushButton("Registered customer")
+        choose_customer.setObjectName("ghost")
+        choose_customer.clicked.connect(self._select_registered_customer)
+        customer_row.addWidget(choose_customer)
+        right.addLayout(customer_row)
         self.cart_table = QTableWidget(0, 6)
         self.cart_table.setHorizontalHeaderLabels(["SKU", "Item", "Price", "Qty", "Total", ""])
         self.cart_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.cart_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.cart_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.cart_table.cellDoubleClicked.connect(self._edit_cart_price)
         self.cart_table.verticalHeader().setVisible(False)
         right.addWidget(self.cart_table, 2)
 
@@ -590,6 +597,35 @@ class POSPage(QWidget):
             btn.clicked.connect(lambda checked=False, i=idx: self._remove_line(i))
             self.cart_table.setCellWidget(idx, 5, btn)
 
+    def _edit_cart_price(self, row: int, column: int):
+        if column != 2 or not (0 <= row < len(self.cart)):
+            return
+        role=str(getattr(self.ops,"actor_role","Staff"))
+        if role not in {"Admin","Manager"}:
+            QMessageBox.information(self,"Price editing restricted","Only Admin or Manager accounts can override item prices.")
+            return
+        line=self.cart[row]
+        new_price,ok=QInputDialog.getDouble(self,"Override unit price",
+            f"{line.name}\nCurrent: {self.currency} {line.unit_price:.2f}\nEnter negotiated selling price:",
+            float(line.unit_price),0,100000000,2)
+        if not ok or Decimal(str(new_price)).quantize(Decimal("0.01"))==line.unit_price:
+            return
+        reason,ok=QInputDialog.getText(self,"Price override reason","Reason (customer negotiation, promotion, damaged box, etc.):")
+        if not ok or not reason.strip():
+            QMessageBox.warning(self,"Reason required","A reason is required for price overrides.")
+            return
+        old=line.unit_price
+        line.unit_price=Decimal(str(new_price)).quantize(Decimal("0.01"))
+        try:
+            with self.ops._transaction():
+                self.ops.audit_event("POS price override","cart",None,
+                    f"{line.sku} {line.name}: {self.currency} {old:.2f} -> {self.currency} {line.unit_price:.2f}; reason: {reason.strip()}")
+        except Exception:
+            line.unit_price=old
+            QMessageBox.warning(self,"Audit failure","The override could not be recorded; price was restored.")
+            return
+        self._rebuild_cart_table(); self._refresh_totals()
+
     def _remove_line(self, index: int):
         if 0 <= index < len(self.cart):
             del self.cart[index]; self._rebuild_cart_table(); self._refresh_totals()
@@ -599,13 +635,32 @@ class POSPage(QWidget):
         if QMessageBox.question(self, "Clear cart", "Remove all items from this sale?",
                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
-        self.cart.clear(); self.discount_pct.setValue(0); self.discount_amt.setValue(0)
+        self.cart.clear(); self.customer_id=None; self.customer_name="Walk-in Customer"; self.customer_edit.setText(self.customer_name); self.discount_pct.setValue(0); self.discount_amt.setValue(0)
         self.discount_reason_edit.clear(); self._rebuild_cart_table(); self._refresh_totals()
         self.search_input.setFocus()
+
+    def _select_registered_customer(self):
+        try:
+            customers=self.ops.customers()
+        except Exception as exc:
+            QMessageBox.warning(self,"Customer lookup failed",str(exc));return
+        choices=["Walk-in Customer"]+[f"{c['name']} · {c['contact'] or 'no contact'}" for c in customers]
+        choice,ok=QInputDialog.getItem(self,"Select registered customer","Customer:",choices,0,False)
+        if not ok:return
+        index=choices.index(choice)
+        if index==0:
+            self.customer_id=None; self.customer_name="Walk-in Customer"
+        else:
+            c=customers[index-1]; self.customer_id=int(c["id"]); self.customer_name=str(c["name"])
+        self.customer_edit.setText(self.customer_name)
 
     def _update_customer(self):
         name = self.customer_edit.text().strip()
         self.customer_name = name or "Walk-in Customer"
+        # Free-text customer names are not a registered customer account and cannot
+        # be used for credit-limit checks. Explicit picker sets the customer ID.
+        if name != self.customer_name or name.lower()=="walk-in customer":
+            self.customer_id=None
         if not name: self.customer_edit.setText(self.customer_name)
 
     def _on_discount_changed(self, value: float):
@@ -694,14 +749,14 @@ class POSPage(QWidget):
         held = self.held_loader()
         held.append({
             "at": __import__("datetime").datetime.now().strftime("%H:%M"),
-            "customer": self.customer_name,
+            "customer": self.customer_name, "customer_id": self.customer_id,
             "discount_percent": str(self.discount_percent), "discount_amount": str(self.discount_amount),
             "discount_reason": self.discount_reason_edit.text().strip(),
             "lines": [{"product_id": l.product_id, "sku": l.sku, "name": l.name,
                        "unit_price": str(l.unit_price), "quantity": str(l.quantity),
                        "stock": str(l.stock), "serial": l.serial} for l in self.cart],
         })
-        self.held_saver(held); self.cart.clear(); self.discount_pct.setValue(0); self.discount_amt.setValue(0)
+        self.held_saver(held); self.cart.clear(); self.customer_id=None; self.customer_name="Walk-in Customer"; self.customer_edit.setText(self.customer_name); self.discount_pct.setValue(0); self.discount_amt.setValue(0)
         self.discount_reason_edit.clear(); self._rebuild_cart_table(); self._refresh_totals()
         self.btn_recall.setText(f"Recall ({len(held)})  F7"); self.search_input.setFocus()
 
@@ -713,6 +768,7 @@ class POSPage(QWidget):
             QMessageBox.information(self, "Finish current sale", "Hold or clear before recalling."); return
         ticket = held.pop(); self.held_saver(held)
         self.customer_name = ticket.get("customer") or "Walk-in Customer"
+        self.customer_id = ticket.get("customer_id")
         self.customer_edit.setText(self.customer_name)
         self.cart = [CartLine(int(l["product_id"]), l["sku"], l["name"], Decimal(str(l["unit_price"])),
                               Decimal(str(l["quantity"])), Decimal(str(l.get("stock") or 0)), l.get("serial") or "")

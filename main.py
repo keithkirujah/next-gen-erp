@@ -4,7 +4,7 @@ from pathlib import Path
 from datetime import datetime
 from decimal import Decimal
 from PySide6.QtCore import Qt, QSize, QTimer, QRectF, QPointF, QUrl, QDate, QTime, QThread, Signal, QObject, QEvent, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QShortcut, QKeySequence, QPixmap, QColor, QFont, QPainter, QPen, QBrush, QLinearGradient, QAction, QTextDocument, QPageSize, QDesktopServices
+from PySide6.QtGui import QShortcut, QKeySequence, QPixmap, QColor, QFont, QPainter, QPen, QBrush, QLinearGradient, QAction, QTextDocument, QPageSize, QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QLineEdit, QFrame, QStackedWidget, QTableWidget, QTableWidgetItem,
@@ -34,6 +34,9 @@ import zipfile
 import urllib.error
 from pos_ui import POSPage
 from returns_ui import ReturnsPage
+from product_lending_ui import ProductLendingPage
+from onboarding_tour import show_guided_tour
+from update_centre import UpdateCentreDialog
 
 POS_UNAVAILABLE_PROFILES = frozenset({"School / training centre", "Professional services"})
 
@@ -53,6 +56,7 @@ MODULES = {
     "Sales": ("↗", "Customers, quotations, orders and invoices"),
     "Point of Sale": ("▣", "Fast counter checkout using the stock-backed sales engine"),
     "Returns Desk": ("↺", "Process refunds and restock returned goods"),
+    "Product Lending": ("⇄", "Temporary product issues, customer exposure and settlements"),
     "Purchases": ("⇩", "Suppliers and purchase orders"),
     "Inventory": ("⬡", "Products, stock and movements"),
     "Finance": ("◉", "Cashbook, expenses, payment channels and daily cashflow"),
@@ -101,6 +105,7 @@ PROTECTED_CAPABILITIES = {"configure", "backup", "sync", "delete"}
 DEFAULT_FIELDS = {
     "Sales": ["Customer", "Reference", "Amount (KES)", "Status"],
     "Point of Sale": ["Receipt", "Customer", "Items", "Total", "Payment status"],
+    "Product Lending": ["Customer", "Product", "Quantity", "Due date", "Status"],
     "Returns Desk": ["Return #", "Sale", "Refund", "Reason", "Status"],
     "Purchases": ["Supplier", "Reference", "Amount (KES)", "Status"],
     "Inventory": ["Product", "SKU", "Quantity", "Unit Price (KES)"],
@@ -310,6 +315,8 @@ class Store:
             self.conn.execute("ALTER TABLE sync_queue ADD COLUMN workspace_id TEXT NOT NULL DEFAULT '__global__'")
         # Employee codes for receipt privacy / served-by lines
         user_columns = {row[1] for row in self.conn.execute("PRAGMA table_info(users)").fetchall()}
+        if "lending_limit" not in user_columns:
+            self.conn.execute("ALTER TABLE users ADD COLUMN lending_limit TEXT NOT NULL DEFAULT '0.00'")
         if "employee_code" not in user_columns:
             self.conn.execute("ALTER TABLE users ADD COLUMN employee_code TEXT NOT NULL DEFAULT ''")
             existing = self.conn.execute("SELECT id FROM users ORDER BY id").fetchall()
@@ -1783,12 +1790,29 @@ class LoginDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 26, 28, 24)
         layout.setSpacing(14)
-        brand = QLabel("⬡  NextGen ERP")
-        brand.setStyleSheet("font-size:22pt;font-weight:900;padding:4px 0 8px;")
+        brand_row = QHBoxLayout()
+        brand_row.setSpacing(12)
+        brand_mark = QLabel()
+        brand_mark.setFixedSize(58, 58)
+        brand_mark.setAlignment(Qt.AlignCenter)
+        brand_asset = Path(__file__).resolve().parent / "assets" / "nextgen-erp-mark.svg"
+        if brand_asset.exists():
+            mark = QPixmap(str(brand_asset))
+            if not mark.isNull():
+                brand_mark.setPixmap(mark.scaled(52, 52, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        brand_row.addWidget(brand_mark)
+        brand_copy = QVBoxLayout()
+        brand = QLabel("NextGen ERP")
+        brand.setStyleSheet("font-size:21pt;font-weight:900;padding:0;")
+        product_line = QLabel("SMARTER BUSINESS. BUILT TO ADAPT.")
+        product_line.setStyleSheet(f"font-size:7pt;font-weight:800;letter-spacing:1px;color:{palette['muted']};")
+        brand_copy.addWidget(brand)
+        brand_copy.addWidget(product_line)
+        brand_row.addLayout(brand_copy, 1)
+        layout.addLayout(brand_row)
         subtitle = QLabel("Sign in to your business workspace")
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet(f"color:{palette['muted']};")
-        layout.addWidget(brand)
         layout.addWidget(subtitle)
         form = QFormLayout()
         form.setSpacing(12)
@@ -1956,12 +1980,27 @@ class App(QMainWindow):
         self.sidebar_width_collapsed = 72
         self.sidebar=QFrame(); self.sidebar.setFixedWidth(self.sidebar_width_expanded); self.sidebar.setStyleSheet(f"background:{self.palette['sidebar']};border-right:1px solid {self.palette['border']};")
         sv=QVBoxLayout(self.sidebar); sv.setContentsMargins(10,14,10,12); sv.setSpacing(4)
+        brand_row = QHBoxLayout()
+        brand_row.setContentsMargins(4, 2, 4, 2)
+        brand_row.setSpacing(9)
+        self.brand_mark = QLabel()
+        self.brand_mark.setFixedSize(42, 42)
+        self.brand_mark.setAlignment(Qt.AlignCenter)
+        brand_asset = Path(__file__).resolve().parent / "assets" / "nextgen-erp-mark.svg"
+        if brand_asset.exists():
+            mark = QPixmap(str(brand_asset))
+            if not mark.isNull():
+                self.brand_mark.setPixmap(mark.scaled(38, 38, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        brand_row.addWidget(self.brand_mark)
         self.brand_label=QLabel()
         self.brand_label.setWordWrap(True)
         self.brand_label.setMaximumHeight(58)
-        self.brand_label.setStyleSheet("font-size:14pt;font-weight:900;padding:3px 5px;")
+        self.brand_label.setStyleSheet("font-size:14pt;font-weight:900;padding:3px 2px;")
+        brand_row.addWidget(self.brand_label, 1)
+        brand_host = QWidget()
+        brand_host.setLayout(brand_row)
         self.update_branding()
-        sv.addWidget(self.brand_label)
+        sv.addWidget(brand_host)
         self.tagline_label=QLabel("SMARTER BUSINESS. BUILT TO ADAPT."); self.tagline_label.setStyleSheet(f"color:{self.palette['muted']};font-size:7pt;font-weight:700;padding:0 7px 6px;"); sv.addWidget(self.tagline_label)
         scroll=QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
         navhost=QWidget(); self.navlay=QVBoxLayout(navhost); self.navlay.setContentsMargins(0,8,0,8); self.navlay.setSpacing(3)
@@ -2014,6 +2053,7 @@ class App(QMainWindow):
         self.syncpill.setToolTip("Backup status — click to open Database and Backup")
         self.syncpill.clicked.connect(lambda:self.show_page("Database and Backup") if self._can_open_backup_page() else self.backups.run_now("manual") if "backup" in self.store.role_permissions(self.role) else None)
         th.addWidget(self.syncpill)
+        self.tour_btn=QPushButton("✦  Guided tour"); self.tour_btn.setToolTip("Replay the interactive NextGen ERP walkthrough"); self.tour_btn.clicked.connect(lambda:show_guided_tour(self, first_run=False)); th.addWidget(self.tour_btn)
         self.profile_chip=QLabel(f"  {self.display_name}  ·  {role}  "); self.profile_chip.setStyleSheet(f"font-weight:700;padding:7px 12px;background:{self.palette['panel2']};border:1px solid {self.palette['border']};border-radius:999px;color:{self.palette['text']};"); th.addWidget(self.profile_chip)
         out=QPushButton("Sign out"); out.clicked.connect(self.sign_out); th.addWidget(out)
         rv.addWidget(top)
@@ -2023,13 +2063,16 @@ class App(QMainWindow):
         self.backups=BackupManager(self.store,self.toast,parent=self)
         self.backups.state_changed.connect(self.refresh_syncpill)
         QShortcut(QKeySequence("Ctrl+K"),self,self.open_palette)
+        QShortcut(QKeySequence("Ctrl+F"),self,lambda:self.search.setFocus())
         QShortcut(QKeySequence("Ctrl+L"),self,self.lock_screen)
         self.idle_watcher=IdleWatcher(lambda:self.store.setting("idle_lock_minutes","10"),self)
         self.idle_watcher.idle.connect(self.lock_screen)
         self.refresh_syncpill()
         self.show_page("Dashboard")
         self.showMaximized()
-        self.timer=QTimer(self); self.timer.timeout.connect(self.refresh_syncpill); self.timer.start(8000)
+        if self.store.setting("onboarding_tour_completed", "0") != "1":
+            QTimer.singleShot(1100, lambda: show_guided_tour(self, first_run=True) if self.isVisible() else None)
+        self.timer=QTimer(self); self.timer.timeout.connect(self.refresh_syncpill); self.timer.start(30000)
         self.backups.start()
     def closeEvent(self,event):
         timer=getattr(self,"timer",None)
@@ -2106,16 +2149,39 @@ class App(QMainWindow):
     # ------------------------------------------------------------------ Command palette
     def open_palette(self):
         if getattr(self,"_locked",False): return
-        items=[(f"Go to {name}",name.lower(),("page",name)) for name in self.nav]
-        extra=[("Back up now","backup save data",("call",lambda:self.backups.run_now("manual"))),
+        items=[("Go to Dashboard","overview home pulse",("page","Dashboard"))]+[(f"Go to {name}",name.lower(),("page",name)) for name in self.nav]
+        extra=[("Find records","search customer product invoice repair stock",("call",lambda:self.search.setFocus())),
+               ("Back up now","backup save data",("call",lambda:self.backups.run_now("manual"))),
                ("Printer setup","print paper receipt thermal",("call",self.open_printer_setup)),
                ("Lock screen","lock secure away",("call",self.lock_screen)),
                ("Switch light / dark theme","theme colour dark light",("call",self.toggle_theme)),
                ("Set daily sales goal","goal target pulse",("call",self.set_daily_goal)),
                ("Open or close shift (Z-report)","shift till cash drawer z report float",("call",self.shift_action)),
                ("Open log folder","log support help",("call",lambda:QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_dir(APP_DIR))))))]
-        if "Point of Sale" in self.nav: extra.insert(0,("New sale — Point of Sale","pos checkout till sell",("page","Point of Sale")))
-        if "Reports" in self.nav: extra.append(("Report centre — export CSV / print","reports export csv profit tax debtors",("page","Reports")))
+        # Task-first aliases make the palette useful even when users do not
+        # remember the module name. They only point to destinations the current
+        # role is already authorised to open.
+        workflow_aliases = [
+            ("Start a sale", "checkout till cash receipt sell transaction", "Point of Sale"),
+            ("Register a customer", "new customer add client contact CRM", "CRM"),
+            ("Receive stock / supplier delivery", "stock intake purchase supplier goods", "Purchases"),
+            ("Add or edit products", "product catalogue SKU stock inventory", "Inventory"),
+            ("Record an expense", "expense cash out payment finance cashbook", "Finance"),
+            ("Create an invoice / sales record", "invoice quotation sales receipt", "Sales"),
+            ("Open repair intake", "repair ticket service job laptop phone", "Repair Tickets"),
+            ("Issue products on credit", "lend loan credit customer staff product", "Product Lending"),
+            ("View business reports", "report centre export CSV print profit tax", "Reports"),
+            ("Manage appointments", "booking schedule calendar appointment", "Appointments"),
+            ("Manage returns", "refund exchange returned goods", "Returns Desk"),
+        ]
+        for label, keywords, target_page in workflow_aliases:
+            if target_page in self.nav:
+                extra.append((label, keywords, ("page", target_page)))
+        # Preserve the dedicated POS and report shortcuts for quick scanning.
+        if "Point of Sale" in self.nav:
+            extra.insert(0,("New sale — Point of Sale","pos checkout till sell",("page","Point of Sale")))
+        if "Reports" in self.nav:
+            extra.append(("Report centre — export CSV / print","reports export csv profit tax debtors",("page","Reports")))
         dlg=CommandPalette(self,extra+items,themed_style(self.palette)); dlg.exec()
         if dlg.chosen:
             kind,target=dlg.chosen
@@ -2175,11 +2241,15 @@ class App(QMainWindow):
         if self.sidebar_expanded:
             self.sidebar.setFixedWidth(self.sidebar_width_expanded)
             self.tagline_label.show()
-            self.brand_label.setStyleSheet("font-size:14pt;font-weight:900;padding:3px 5px;")
+            self.brand_mark.show()
+            self.brand_label.show()
+            self.brand_label.setStyleSheet("font-size:14pt;font-weight:900;padding:3px 2px;")
             self.sidebar_toggle.setText("☰")
         else:
             self.sidebar.setFixedWidth(self.sidebar_width_collapsed)
             self.tagline_label.hide()
+            self.brand_label.hide()
+            self.brand_mark.show()
             self.brand_label.setStyleSheet("font-size:11pt;font-weight:900;padding:2px;")
             self.sidebar_toggle.setText("»")
         self.rebuild_nav_labels()
@@ -2196,7 +2266,7 @@ class App(QMainWindow):
             if getattr(self, "sidebar_expanded", True):
                 display = {
                     "Sales": "Sales and Receipts", "Purchases": "Purchases and Suppliers",
-                    "Inventory": "Stock and Catalogue", "Finance": "Cashbook and Cashflow",
+                    "Inventory": "Stock and Catalogue", "Finance": "Cashbook and Cashflow", "Product Lending": "Product Lending",
                     "CRM": "Customers", "Repair Tickets": "Service and Repairs",
                     "Reports": "Business Reports", "Point of Sale": "Point of Sale",
                     "HR & Payroll": "HR and Payroll", "Batches & Expiry": "Batches and Expiry",
@@ -2273,7 +2343,7 @@ class App(QMainWindow):
         display_names={
             "Sales":"Sales and Receipts",
             "Purchases":"Purchases and Suppliers",
-            "Inventory":"Stock and Catalogue",
+            "Inventory":"Stock and Catalogue", "Product Lending":"Product Lending",
             "Finance":"Cashbook and Cashflow",
             "CRM":"Customers",
             "Repair Tickets":"Service and Repairs",
@@ -2394,6 +2464,7 @@ class App(QMainWindow):
         elif name=="Sales": page=self.sales_page()
         elif name=="Point of Sale": page=self.pos_page()
         elif name=="Returns Desk": page=self.returns_page()
+        elif name=="Product Lending": page=ProductLendingPage(self)
         elif name=="Purchases": page=self.purchases_page()
         elif name=="Finance": page=self.finance_page()
         elif name=="CRM": page=self.crm_page()
@@ -2469,6 +2540,7 @@ class App(QMainWindow):
             dark=dark,
             user_name=self.display_name or self.username,
             currency=currency,
+            allowed_modules=set(self.nav),
             parent=self,
         )
         view.navigate.connect(self.show_page)
@@ -2510,23 +2582,33 @@ class App(QMainWindow):
         table.verticalHeader().setDefaultSectionSize(40)
         table.horizontalHeader().setHighlightSections(False)
         table.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        # Interactive sizing avoids costly ResizeToContents scans across large datasets.
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         table.horizontalHeader().setStretchLastSection(True)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         return table
 
     def _fill_table(self, table, rows, values, record_id_key="id", hide_id=False):
-        table.setRowCount(len(rows))
-        for row_index,row in enumerate(rows):
-            row_values=values(row)
-            for col,value in enumerate(row_values):
-                item=QTableWidgetItem(str(value))
-                if col == 0 and record_id_key in row.keys():
-                    item.setData(Qt.UserRole,int(row[record_id_key]))
-                table.setItem(row_index,col,item)
-        if hide_id:
-            table.setColumnHidden(0,True)
+        # Batch population: defer repainting and sorting while creating cells.
+        table.setUpdatesEnabled(False)
+        sorting = table.isSortingEnabled()
+        table.setSortingEnabled(False)
+        try:
+            table.setRowCount(len(rows))
+            for row_index,row in enumerate(rows):
+                row_values=values(row)
+                for col,value in enumerate(row_values):
+                    item=QTableWidgetItem(str(value))
+                    if col == 0 and record_id_key in row.keys():
+                        item.setData(Qt.UserRole,int(row[record_id_key]))
+                    table.setItem(row_index,col,item)
+            if hide_id:
+                table.setColumnHidden(0,True)
+        finally:
+            table.setSortingEnabled(sorting)
+            table.setUpdatesEnabled(True)
+            table.viewport().update()
 
     def _selected_table_id(self, table):
         row=table.currentRow()
@@ -3965,15 +4047,96 @@ class App(QMainWindow):
                 self._refresh_operation_page("Finance")
 
     def crm_page(self):
-        w,v=self.page_container("Customers","Customer directory used by sales, repairs, payments and service-history follow-up.")
+        w,v=self.page_container("Customers","Customer directory, negotiated pricing, credit facilities and service-history follow-up.")
         row=QHBoxLayout()
         if "create" in self.store.role_permissions(self.role):
             add=QPushButton("＋ Add customer"); add.setObjectName("primary"); add.clicked.connect(lambda:self.create_party_dialog("customer")); row.addWidget(add)
-        legacy=QPushButton("View legacy CRM records"); legacy.clicked.connect(lambda:self._show_legacy_records("CRM")); row.addWidget(legacy); row.addStretch(); v.addLayout(row)
-        table=self._table(["ID","CUSTOMER","CONTACT","EMAIL","CREATED"])
+        legacy=QPushButton("View legacy CRM records"); legacy.clicked.connect(lambda:self._show_legacy_records("CRM")); row.addWidget(legacy)
+        if self.role=="Admin":
+            credit=QPushButton("Manage credit facility"); credit.clicked.connect(lambda:self._manage_customer_credit(table)); row.addWidget(credit)
+            audit=QPushButton("Activity audit"); audit.clicked.connect(self._show_audit_events); row.addWidget(audit)
+            credit_report=QPushButton("Credit activity report"); credit_report.clicked.connect(self._show_credit_activity); row.addWidget(credit_report)
+        row.addStretch(); v.addLayout(row)
+        table=self._table(["ID","CUSTOMER","CONTACT","EMAIL","CREDIT","LIMIT (KES)","BALANCE (KES)","OVERDUE (KES)","CREATED"])
         rows=self.store.operations.customers()
-        self._fill_table(table,rows,lambda r:[r["id"],r["name"],r["contact"],r["email"],r["created_at"]],hide_id=True)
+        enriched=[]
+        for r in rows:
+            try:
+                summary=self.store.operations.customer_credit_summary(r["id"])
+            except Exception: summary={"enabled":False,"limit":Decimal("0"),"outstanding":Decimal("0"),"overdue":Decimal("0")}
+            summary["overdue"]=self.store.operations.customer_overdue_balance(r["id"])
+            enriched.append((r,summary))
+        table.setRowCount(len(enriched))
+        for i,(r,summary) in enumerate(enriched):
+            values=[r["id"],r["name"],r["contact"],r["email"],"Enabled" if summary["enabled"] else "Disabled",
+                    f"{summary['limit']:.2f}",f"{summary['outstanding']:.2f}",f"{summary['overdue']:.2f}",r["created_at"]]
+            for j,val in enumerate(values):
+                item=QTableWidgetItem(str(val)); table.setItem(i,j,item)
+        table.setColumnHidden(0,True)
+        table.setSortingEnabled(True)
         v.addWidget(table,1); return w
+
+    def _manage_customer_credit(self, table):
+        if self.role!="Admin": return
+        row=table.currentRow()
+        if row<0:
+            QMessageBox.information(self,"Select customer","Select a customer row first."); return
+        customer_id=int(table.item(row,0).text())
+        customer=self.store.operations.conn.execute("SELECT * FROM customers WHERE id=?",(customer_id,)).fetchone()
+        if not customer: return
+        enabled,ok=QInputDialog.getItem(self,"Credit facility",f"{customer['name']} · enable credit?",["Enabled","Disabled"],0 if customer["credit_enabled"] else 1,False)
+        if not ok:return
+        limit,ok=QInputDialog.getDouble(self,"Credit limit",f"Maximum outstanding for {customer['name']} (KES):",float(customer["credit_limit"] or 0),0,100000000,2)
+        if not ok:return
+        days,ok=QInputDialog.getInt(self,"Repayment terms","Credit duration in days (0 = due immediately):",int(customer["credit_days"] or 0),0,3650)
+        if not ok:return
+        try:
+            self.store.operations.configure_customer_credit(customer_id,enabled=="Enabled",limit,days)
+            self.store.log(self.username,"Credit facility changed",f"{customer['name']}: {enabled}, KES {limit:.2f}, {days} days")
+            self.show_page("CRM")
+        except Exception as exc: QMessageBox.warning(self,"Credit update failed",str(exc))
+
+    def _show_credit_activity(self):
+        if self.role!="Admin": return
+        period,ok=QInputDialog.getItem(self,"Credit activity","Reporting period:",["Today","Last 7 days","All time"],0,False)
+        if not ok:return
+        if period=="Today": since=datetime.now().strftime("%Y-%m-%d")
+        elif period=="Last 7 days": since=(datetime.now()-__import__("datetime").timedelta(days=7)).strftime("%Y-%m-%d")
+        else: since=None
+        dlg=QDialog(self); dlg.setWindowTitle("Customer credit activity · KES"); dlg.resize(1100,620)
+        root=QVBoxLayout(dlg); table=QTableWidget(0,8)
+        table.setHorizontalHeaderLabels(["CUSTOMER","CREDIT LIMIT","USED / OUTSTANDING","AVAILABLE","OVERDUE","CREDIT CREATED IN PERIOD","REPAID IN PERIOD","TERMS"])
+        customers=self.store.operations.customers(); table.setRowCount(len(customers))
+        for i,c in enumerate(customers):
+            summary=self.store.operations.customer_credit_summary(c["id"])
+            activity=self.store.operations.credit_activity_summary(c["id"],since)
+            vals=[c["name"],f"{summary['limit']:.2f}",f"{summary['outstanding']:.2f}",f"{summary['available']:.2f}",f"{self.store.operations.customer_overdue_balance(c['id']):.2f}",
+                  f"{activity['credit_extended']:.2f}",f"{activity['repaid']:.2f}",f"{summary['credit_days']} days"]
+            for j,val in enumerate(vals):table.setItem(i,j,QTableWidgetItem(str(val)))
+        table.horizontalHeader().setSectionResizeMode(0,QHeaderView.Stretch); table.setAlternatingRowColors(True)
+        root.addWidget(table)
+        close=QPushButton("Close");close.clicked.connect(dlg.accept);root.addWidget(close);dlg.exec()
+
+    def _show_audit_events(self):
+        if self.role!="Admin": return
+        dlg=QDialog(self); dlg.setWindowTitle("Activity audit log"); dlg.resize(1050,600)
+        root=QVBoxLayout(dlg); table=QTableWidget(0,7)
+        table.setHorizontalHeaderLabels(["ID","USER","ROLE","ACTION","ENTITY","DETAILS","TIMESTAMP"])
+        audit_rows=self.store.operations.conn.execute("SELECT * FROM audit_events ORDER BY id DESC LIMIT 1000").fetchall()
+        try:
+            legacy_rows=self.store.conn.execute("SELECT username,action,details,created_at FROM activity WHERE workspace_id=? ORDER BY id DESC LIMIT 1000",(self.store.workspace_id or "__global__",)).fetchall()
+        except Exception:
+            legacy_rows=[]
+        rows=[(r["id"],r["username"],r["role"],r["action"],r["entity_type"],r["details"],r["created_at"]) for r in audit_rows]
+        rows += [(f"legacy-{r['created_at']}",r["username"],"—",r["action"],"activity",r["details"],r["created_at"]) for r in legacy_rows]
+        rows.sort(key=lambda x:str(x[6]),reverse=True)
+        table.setRowCount(len(rows))
+        for i,r in enumerate(rows):
+            for j,val in enumerate(r):
+                table.setItem(i,j,QTableWidgetItem(str(val)))
+        table.horizontalHeader().setSectionResizeMode(5,QHeaderView.Stretch)
+        table.setAlternatingRowColors(True); root.addWidget(table)
+        close=QPushButton("Close"); close.clicked.connect(dlg.accept); root.addWidget(close); dlg.exec()
 
     def create_party_dialog(self, kind):
         if not self._authorize("create"): return
@@ -5612,13 +5775,19 @@ class App(QMainWindow):
             return
         subtitle = "Manage Staff and Manager accounts." if self.role != "Admin" else "Manage local accounts, status and credentials. Administrator accounts are only visible to Admin."
         w,v=self.page_container("User Management", subtitle)
-        actions=QHBoxLayout()
-        btn=QPushButton("＋ Add user"); btn.setObjectName("primary"); btn.clicked.connect(self.add_user); actions.addWidget(btn)
-        toggle=QPushButton("Enable / disable selected"); toggle.clicked.connect(self.toggle_selected_user); actions.addWidget(toggle)
-        reset=QPushButton("Reset selected password"); reset.clicked.connect(self.reset_selected_user_password); actions.addWidget(reset)
-        delete=QPushButton("Delete selected permanently"); delete.clicked.connect(self.delete_selected_user); actions.addWidget(delete)
-        actions.addStretch(); v.addLayout(actions)
-        table=self._table(["ID","USERNAME","DISPLAY NAME","EMPLOYEE CODE","ROLE","ACTIVE"])
+        actions=QGridLayout()
+        actions.setHorizontalSpacing(10); actions.setVerticalSpacing(8)
+        btn=QPushButton("＋ Add user"); btn.setObjectName("primary"); btn.clicked.connect(self.add_user); actions.addWidget(btn,0,0)
+        toggle=QPushButton("Enable / disable selected"); toggle.clicked.connect(self.toggle_selected_user); actions.addWidget(toggle,0,1)
+        reset=QPushButton("Reset selected password"); reset.clicked.connect(self.reset_selected_user_password); actions.addWidget(reset,0,2)
+        delete=QPushButton("Delete selected permanently"); delete.clicked.connect(self.delete_selected_user); actions.addWidget(delete,1,0)
+        lending=QPushButton("💳 Set lending authority"); lending.setToolTip("Set the maximum value this selected employee may approve per product-lending transaction."); lending.clicked.connect(self.set_selected_lending_authority); actions.addWidget(lending,1,1)
+        actions.setColumnStretch(0,1); actions.setColumnStretch(1,1); actions.setColumnStretch(2,1)
+        v.addLayout(actions)
+        authority_hint=QLabel("Select an employee in the table, then choose Set lending authority to assign their per-transaction approval ceiling.")
+        authority_hint.setWordWrap(True); authority_hint.setStyleSheet(f"color:{self.palette['muted']};padding:4px 0;")
+        v.addWidget(authority_hint)
+        table=self._table(["ID","USERNAME","DISPLAY NAME","EMPLOYEE CODE","ROLE","LENDING AUTHORITY (KES)","ACTIVE"])
         # Managers never see Admin accounts — only Admin can view/manage administrators
         if self.role == "Admin":
             rows=self.store.conn.execute("SELECT * FROM users ORDER BY id").fetchall()
@@ -5627,7 +5796,7 @@ class App(QMainWindow):
         table.setRowCount(len(rows))
         for i,r in enumerate(rows):
             code = r["employee_code"] if "employee_code" in r.keys() else ""
-            for j,val in enumerate([r["id"], r["username"], r["display_name"], code or "—", r["role"], "Yes" if r["active"] else "No"]):
+            for j,val in enumerate([r["id"], r["username"], r["display_name"], code or "—", r["role"], f"KSh {Decimal(str(r['lending_limit'] or '0')):,.2f}", "Yes" if r["active"] else "No"]):
                 table.setItem(i,j,QTableWidgetItem(str(val)))
         table.setColumnHidden(0,True)
         v.addWidget(table,1)
@@ -5681,6 +5850,21 @@ class App(QMainWindow):
             QMessageBox.warning(self, "Not allowed", "Administrator accounts are only visible to Admin.")
             return None
         return row
+    def set_selected_lending_authority(self):
+        if not self._authorize("manage_users"): return
+        user=self._selected_user()
+        if not user: return
+        if user["role"]=="Admin" and self.role!="Admin":
+            QMessageBox.warning(self,"Not allowed","Only Admin can configure administrator lending authority."); return
+        current=Decimal(str(user["lending_limit"] or "0"))
+        amount,ok=QInputDialog.getDouble(self,"Staff lending authority",
+            f"Maximum value this employee may approve per product-lending transaction (KES):",
+            float(current),0,100000000,2)
+        if not ok: return
+        with self.store.conn:
+            self.store.conn.execute("UPDATE users SET lending_limit=? WHERE id=?",(f"{amount:.2f}",user["id"]))
+        self.store.log(self.username,"Changed lending authority",f"{user['username']} · KSh {amount:,.2f}")
+        self.pages.pop("User Management",None); self.show_page("User Management")
     def toggle_selected_user(self):
         if not self._authorize("manage_users"): return
         user=self._selected_user()
@@ -5866,6 +6050,20 @@ class App(QMainWindow):
         if not self._authorize('configure'):
             return
         w,v=self.page_container("Business & System Settings","Personalize the ERP for your organization. Settings are saved on this computer.")
+        product_brand = QHBoxLayout()
+        product_mark = QLabel()
+        product_mark.setFixedSize(42, 42)
+        product_asset = Path(__file__).resolve().parent / "assets" / "nextgen-erp-mark.svg"
+        if product_asset.exists():
+            product_pixmap = QPixmap(str(product_asset))
+            if not product_pixmap.isNull():
+                product_mark.setPixmap(product_pixmap.scaled(38, 38, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        product_brand.addWidget(product_mark)
+        product_identity = QVBoxLayout()
+        product_identity.addWidget(QLabel("<b>NextGen ERP</b>"))
+        product_identity.addWidget(QLabel("<span style='font-size:8pt'>PRODUCT BRANDING · BUSINESS CONFIGURATION</span>"))
+        product_brand.addLayout(product_identity, 1)
+        v.addLayout(product_brand)
         business=self.panel(); bf=QFormLayout(business); bf.setContentsMargins(24,24,24,24); bf.setSpacing(16); bf.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         company=QLineEdit(self.store.setting("business_name", "")); company.setPlaceholderText("e.g. Acme Enterprises Ltd")
         tagline=QLineEdit(self.store.setting("business_tagline", "")); tagline.setPlaceholderText("A short description of your business")
@@ -6067,8 +6265,14 @@ class App(QMainWindow):
             preserved_note=(" Workspaces kept enabled to retain existing records: " + ", ".join(preserved_modules) + ".") if profile_applied and preserved_modules else ""
             QMessageBox.information(self,"Saved",f"Business identity and settings were saved locally. {profile_note}{preserved_note} Profile workspaces use configurable records; connected industry workflows are still in progress.")
 
-        save.clicked.connect(do_save); row.addWidget(save); printbtn=QPushButton("🖨  Printer setup"); printbtn.clicked.connect(self.open_printer_setup); row.addWidget(printbtn); row.addStretch(); v.addLayout(row); v.addStretch(); return w
+        save.clicked.connect(do_save); row.addWidget(save); updatebtn=QPushButton("⬆  Update Centre"); updatebtn.clicked.connect(self.open_update_centre); row.addWidget(updatebtn);  printbtn=QPushButton("🖨  Printer setup"); printbtn.clicked.connect(self.open_printer_setup); row.addWidget(printbtn); row.addStretch(); v.addLayout(row); v.addStretch(); return w
 
+
+    def open_update_centre(self):
+        if not self._authorize('configure'):
+            return
+        dlg=UpdateCentreDialog(self, app_root=Path(__file__).resolve().parent, launcher=Path(__file__).resolve().parent/'START_ERP.bat')
+        dlg.exec()
 
     def open_infrastructure_dialog(self):
         """Configure multi-branch sync, eTIMS agent, and till/scale hardware."""
@@ -6349,7 +6553,7 @@ class App(QMainWindow):
     def update_branding(self):
         business_name=self.store.setting("business_name", "NextGen").strip() or "NextGen"
         escaped=self._html_escape(business_name)
-        self.brand_label.setText(f"⬡  {escaped} <span style='color:{self.palette['blue']}'>ERP</span>")
+        self.brand_label.setText(f"<span style='font-size:10pt'>{escaped}</span><br><span style='font-size:7pt;letter-spacing:1px;color:{self.palette['blue']}'>NEXTGEN ERP</span>")
         self.setWindowTitle((self.store.setting("business_name", "Your Business").strip() or "Your Business") + " | NextGen ERP")
 
     def _capture_page_state(self,page):
@@ -6421,36 +6625,26 @@ class App(QMainWindow):
                     widget.blockSignals(signals)
 
     def refresh_appearance(self):
-        pending=dict(getattr(self,"_pending_theme_states",{}))
-        # The painted dashboard swaps palette in place: no rebuild, no intro replay, no recap pop-up.
-        keep={n:p for n,p in self.pages.items() if hasattr(p,"apply_palette")}
-        for name,page in self.pages.items():
-            if name not in keep:
-                pending[name]=self._capture_page_state(page)
-        self._pending_theme_states=pending
-        self.palette=palette_for(self.store, self.theme)
+        # Recolour existing widgets and preserve page instances: avoids expensive
+        # teardown/rebuild and restores the exact current workspace on theme changes.
+        self.palette=palette_for(self.store,self.theme)
         stylesheet=themed_style(self.palette)
         self.setStyleSheet(stylesheet)
         QApplication.instance().setStyleSheet(stylesheet)
         self.sidebar.setStyleSheet(f"background:{self.palette['sidebar']};border-right:1px solid {self.palette['border']};")
         self.topbar.setStyleSheet(f"background:{self.palette['sidebar']};border-bottom:1px solid {self.palette['border']};")
-        self.theme_btn.setText("☀ Light mode" if self.theme == "dark" else "☾ Dark mode")
-        if hasattr(self, "profile_chip"):
+        self.theme_btn.setText("☀ Light mode" if self.theme=="dark" else "☾ Dark mode")
+        if hasattr(self,"profile_chip"):
             self.profile_chip.setStyleSheet(
                 f"font-weight:700;padding:7px 12px;background:{self.palette['panel2']};"
                 f"border:1px solid {self.palette['border']};border-radius:999px;color:{self.palette['text']};"
             )
         self.update_branding()
+        for page in self.pages.values():
+            if hasattr(page,"apply_palette"):
+                page.apply_palette(self.palette,self.theme=="dark")
         active=self.active
         self.rebuild_nav()
-        for page in keep.values():
-            page.apply_palette(self.palette, self.theme=="dark")
-        for name,page in list(self.pages.items()):
-            if name in keep:
-                continue
-            self.stack.removeWidget(page)
-            page.deleteLater()
-        self.pages=dict(keep)
         self.show_page(active)
         self.refresh_syncpill()
 
@@ -7010,6 +7204,8 @@ class ButtonCursorFilter(QObject):
 def main():
     setup_logging(APP_DIR)
     app=QApplication(sys.argv); app.setApplicationName(APP_NAME); app.setStyle("Fusion")
+    brand_icon=Path(__file__).resolve().parent/"assets"/"nextgen-erp-mark.svg"
+    if brand_icon.exists(): app.setWindowIcon(QIcon(str(brand_icon)))
     def crash_dialog(summary, log_path):
         QMessageBox.critical(None,"NextGen ERP hit a problem",
             f"Something unexpected happened:\n\n{summary[:300]}\n\nYour saved data is safe and Real-time Backups are unaffected. "

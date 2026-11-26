@@ -21,7 +21,7 @@ Guardian communications are currently recorded as a staff contact log. The app d
 - **Open shift** on the POS with your cash float. **Close shift** at night: count the cash, and the system shows over/short and prints the **Z-report**.
 - The **Dashboard Pulse card** shows today's sales, your daily goal, the last 14 days, your selling streak and a useful insight. Click the ring to set a goal.
 - **F6** holds a sale while you serve someone else, **F7** recalls it. **F9** completes the sale.
-- **Ctrl+K** opens the command palette: type "backup", "sale", "printer"… and press Enter. **Ctrl+L** locks the screen.
+- **Ctrl+F** jumps straight to record search. **Ctrl+K** opens the command palette: type a module or task (sale, customer, receive stock, repair intake, add product, expense, reports, backup, printer…) and press Enter. It only lists destinations your account can access. **Ctrl+L** locks the screen.
 - **Reports** has ten ready reports (sales by day, best sellers, takings by payment method, tax collected, profit, unpaid invoices, stock value, reorder list, expenses, shifts). Export any to CSV or print it.
 
 ## If something goes wrong

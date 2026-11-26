@@ -1,3 +1,12 @@
+# Experience & performance pass — 2026-11-26
+
+- Added task-oriented command palette entries for common workflows; entries are permission-aware and route to the appropriate workspace.
+- Added Ctrl+F to focus record search and a Dashboard command in Ctrl+K.
+- Command palette is centred, keyboard-friendly, and reports when a search has no results.
+- Reduced backup-status polling from 8 seconds to 30 seconds while preserving immediate state-change refreshes.
+- Dashboard refresh is limited to visible use; its shortcuts respect the user's available modules. Reduced continuous decorative work and batched table rendering.
+- Windows CI now checks Python compilation and dependency health, builds a portable one-folder executable, and uploads a ZIP artifact for successful runs (14-day retention).
+
 ## Command Deck dashboard + seamless theme switch
 - New painted dashboard: living aurora background, glass cards with cursor spotlight, hero with daily-goal ring (click to set a goal), count-up KPIs with sparklines, draw-in sales trend with previous-period ghost line and hover crosshair, interactive payment donut, heat calendar, ranked products, clickable "Needs attention" list and insights.
 - Responsive: 3 layouts (wide / mid / narrow).

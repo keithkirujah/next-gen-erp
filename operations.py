@@ -5,8 +5,10 @@ import sqlite3
 import json
 import csv
 import re
+import hashlib
+import secrets
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 def _as_dict(row):
@@ -40,7 +42,7 @@ class TaxedLine(tuple):
 
 
 class OperationsService:
-    SCHEMA_VERSION = 21
+    SCHEMA_VERSION = 22
 
     def __init__(self, connection):
         self.conn = connection
@@ -77,7 +79,10 @@ class OperationsService:
                     name TEXT NOT NULL,
                     contact TEXT DEFAULT '',
                     email TEXT DEFAULT '',
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    credit_enabled INTEGER NOT NULL DEFAULT 0,
+                    credit_limit TEXT NOT NULL DEFAULT '0.00',
+                    credit_days INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS suppliers(
                     id INTEGER PRIMARY KEY,
@@ -823,6 +828,20 @@ class OperationsService:
                     UNIQUE(product_id, location_id)
                 );
             """)
+            customer_cols={row[1] for row in self.conn.execute("PRAGMA table_info(customers)").fetchall()}
+            for column, declaration in {
+                "credit_enabled": "INTEGER NOT NULL DEFAULT 0",
+                "credit_limit": "TEXT NOT NULL DEFAULT '0.00'",
+                "credit_days": "INTEGER NOT NULL DEFAULT 0",
+            }.items():
+                if column not in customer_cols:
+                    self.conn.execute(f"ALTER TABLE customers ADD COLUMN {column} {declaration}")
+            self.conn.execute("""CREATE TABLE IF NOT EXISTS audit_events(
+                id INTEGER PRIMARY KEY, username TEXT NOT NULL DEFAULT '', role TEXT NOT NULL DEFAULT '',
+                action TEXT NOT NULL, entity_type TEXT NOT NULL DEFAULT '', entity_id INTEGER,
+                details TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+            )""")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_events_created ON audit_events(created_at,id)")
             prod_cols={row[1] for row in self.conn.execute("PRAGMA table_info(products)").fetchall()}
             if "track_serials" not in prod_cols:
                 self.conn.execute("ALTER TABLE products ADD COLUMN track_serials INTEGER NOT NULL DEFAULT 0")
@@ -837,6 +856,7 @@ class OperationsService:
                 "warranty_period": "TEXT NOT NULL DEFAULT 'N/A'",
                 # Printed invoice date (may differ from system created_at when backdating)
                 "invoice_date": "TEXT NOT NULL DEFAULT ''",
+                "credit_due_date": "TEXT NOT NULL DEFAULT ''",
             }.items():
                 if column not in sale_cols:
                     self.conn.execute(f"ALTER TABLE sales ADD COLUMN {column} {declaration}")
@@ -950,6 +970,63 @@ class OperationsService:
     def _next_number(prefix, row_id):
         return f"{prefix}-{row_id:08d}"
 
+    def audit_event(self, action, entity_type="", entity_id=None, details=""):
+        """Append-only local audit event; caller may include transactionally."""
+        self.conn.execute("INSERT INTO audit_events(username,role,action,entity_type,entity_id,details,created_at) VALUES(?,?,?,?,?,?,?)",
+            (str(self.actor_username or "system")[:80],str(self.actor_role or "")[:40],str(action)[:100],
+             str(entity_type)[:80],int(entity_id) if entity_id is not None else None,str(details)[:2000],self._stamp()))
+
+    def configure_customer_credit(self, customer_id, enabled=False, limit=0, days=0):
+        self._require("manage_finance")
+        if self.actor_role != "Admin":
+            raise OperationError("Only Admin can configure customer credit facilities.")
+        value=self._decimal(limit,"Credit limit",minimum=Decimal("0"))
+        days=int(days)
+        if days<0 or days>3650: raise OperationError("Credit duration must be between 0 and 3650 days.")
+        customer=self.conn.execute("SELECT id,name FROM customers WHERE id=?",(int(customer_id),)).fetchone()
+        if not customer: raise OperationError("Customer not found.")
+        with self._transaction():
+            self.conn.execute("UPDATE customers SET credit_enabled=?,credit_limit=?,credit_days=? WHERE id=?",
+                (int(bool(enabled)),self._money(value),days,int(customer_id)))
+            self.audit_event("Credit facility updated","customer",customer_id,
+                f"{customer['name']}: enabled={bool(enabled)}, limit KES {self._money(value)}, terms={days} days")
+            self._enqueue("customers",int(customer_id),{"id":int(customer_id),"credit_enabled":bool(enabled),
+                "credit_limit":self._money(value),"credit_days":days},self._stamp())
+        return self.customer_credit_summary(customer_id)
+
+    def customer_credit_summary(self, customer_id):
+        self._ensure_product_lending_schema()
+        customer=self.conn.execute("SELECT * FROM customers WHERE id=?",(int(customer_id),)).fetchone()
+        if not customer: raise OperationError("Customer not found.")
+        outstanding=self.product_lending_customer_exposure(customer_id=int(customer_id))
+        limit=Decimal(str(customer["credit_limit"] or "0"))
+        return {"customer_id":int(customer_id),"name":customer["name"],"enabled":bool(customer["credit_enabled"]),
+                "limit":limit,"outstanding":outstanding,"available":max(Decimal("0"),limit-outstanding),
+                "credit_days":int(customer["credit_days"] or 0)}
+
+    def customer_overdue_balance(self, customer_id=None):
+        """Balance on credit sales past their configured due date."""
+        today=datetime.now().strftime("%Y-%m-%d")
+        clauses=["status='Completed'","credit_due_date<>''","credit_due_date<?"];params=[today]
+        if customer_id is not None: clauses.append("customer_id=?");params.append(int(customer_id))
+        rows=self.conn.execute(f"SELECT total,paid_total FROM sales WHERE {' AND '.join(clauses)}",params).fetchall()
+        total=sum((max(Decimal(str(r["total"]))-Decimal(str(r["paid_total"])),Decimal("0")) for r in rows),Decimal("0"))
+        return total.quantize(Decimal("0.01"))
+
+    def credit_activity_summary(self, customer_id=None, since=None):
+        """Aggregate credit granted, payments and balances for a period start (ISO date)."""
+        clauses=["status='Completed'"]; params=[]
+        if customer_id is not None: clauses.append("customer_id=?"); params.append(int(customer_id))
+        if since: clauses.append("created_at>=?"); params.append(str(since))
+        rows=self.conn.execute(f"SELECT total,paid_total,created_at FROM sales WHERE {' AND '.join(clauses)}",params).fetchall()
+        granted=sum((max(Decimal(str(r["total"]))-Decimal(str(r["paid_total"])),Decimal("0")) for r in rows),Decimal("0"))
+        paid_clauses=["source_type='customer_payment'"]; paid_params=[]
+        if customer_id is not None: paid_clauses.append("source_id=?"); paid_params.append(int(customer_id))
+        if since: paid_clauses.append("created_at>=?"); paid_params.append(str(since))
+        paidrows=self.conn.execute("SELECT amount,created_at FROM cash_entries WHERE "+ " AND ".join(paid_clauses),paid_params).fetchall()
+        repaid=sum((Decimal(str(r["amount"])) for r in paidrows),Decimal("0"))
+        return {"credit_extended":granted.quantize(Decimal("0.01")),"repaid":repaid.quantize(Decimal("0.01"))}
+
     def create_customer(self, name, contact="", email=""):
         self._require_module("CRM")
         self._require("create")
@@ -961,6 +1038,7 @@ class OperationsService:
             cur=self.conn.execute("INSERT INTO customers(name,contact,email,created_at) VALUES(?,?,?,?)",
                                   (name,str(contact).strip()[:100],str(email).strip()[:160],timestamp))
             self._enqueue("customers",cur.lastrowid,{"id":cur.lastrowid,"name":name,"contact":str(contact).strip()[:100],"email":str(email).strip()[:160]},timestamp)
+            self.audit_event("Customer created","customer",cur.lastrowid,name)
         return cur.lastrowid
 
     def create_supplier(self, name, contact="", email=""):
@@ -2557,6 +2635,7 @@ class OperationsService:
                 (self._money(value), "customer_payment", customer_id or 0, desc, timestamp,
                  payment_method, payment_reference, "Customer receipt")
             ).lastrowid
+            self.audit_event("Customer payment recorded","customer",customer_id,f"{customer_name}: KES {self._money(value)} via {payment_method}; allocated={self._money(allocated)}; unallocated={self._money(remaining)}")
             self._enqueue("cash_entries", cash_id, {
                 "id": cash_id, "direction": "in", "amount": self._money(value),
                 "source_type": "customer_payment", "customer_name": customer_name,
@@ -3281,7 +3360,20 @@ class OperationsService:
         served_by_code=str(served_by_code or "").strip()[:40]
         if not served_by_name:
             served_by_name = str(self.actor_username or "Staff")[:100]
+        if payment_method == "Credit / unpaid":
+            self._ensure_product_lending_schema()
         with self._transaction():
+            if payment_method == "Credit / unpaid":
+                if customer_id is None:
+                    raise OperationError("Credit requires a registered customer with an approved credit facility.")
+                customer_credit=self.conn.execute("SELECT credit_enabled,credit_limit,credit_days FROM customers WHERE id=?",(int(customer_id),)).fetchone()
+                if not customer_credit or not bool(customer_credit["credit_enabled"]):
+                    raise OperationError("This customer has no active credit facility. Ask Admin to enable credit.")
+                outstanding=self.product_lending_customer_exposure(customer_id=int(customer_id))
+                new_balance=outstanding+(total-paid)
+                limit=Decimal(str(customer_credit["credit_limit"] or "0"))
+                if new_balance>limit:
+                    raise OperationError(f"Credit limit exceeded. Available KES {max(Decimal('0'),limit-outstanding):.2f}; requested credit KES {(total-paid):.2f}.")
             quote=None
             if quote_id is not None:
                 quote=self.conn.execute("SELECT * FROM quotes WHERE id=?",(int(quote_id),)).fetchone()
@@ -3305,7 +3397,7 @@ class OperationsService:
             if paid>total:
                 raise OperationError("Amount paid cannot exceed the sale total including tax.")
             if customer_id is not None:
-                customer=self.conn.execute("SELECT name FROM customers WHERE id=?",(int(customer_id),)).fetchone()
+                customer=self.conn.execute("SELECT name,credit_enabled,credit_limit,credit_days FROM customers WHERE id=?",(int(customer_id),)).fetchone()
                 if not customer:
                     raise OperationError("The selected customer no longer exists.")
                 customer_name=customer["name"]
@@ -3348,6 +3440,15 @@ class OperationsService:
                  served_by_name, served_by_code, warranty_period))
             sale_id=cur.lastrowid
             sale_number=self._next_number("SALE",sale_id)
+            credit_balance=max(Decimal("0.00"),total-paid)
+            if credit_balance>0 and customer_id is not None:
+                cinfo=self.conn.execute("SELECT credit_enabled,credit_days FROM customers WHERE id=?",(int(customer_id),)).fetchone()
+                if cinfo and bool(cinfo["credit_enabled"]) and int(cinfo["credit_days"] or 0)>=0:
+                    try:
+                        due=(datetime.fromisoformat(timestamp[:10])+timedelta(days=int(cinfo["credit_days"]))).strftime("%Y-%m-%d")
+                    except Exception:
+                        due=(datetime.now()+timedelta(days=int(cinfo["credit_days"]))).strftime("%Y-%m-%d")
+                    self.conn.execute("UPDATE sales SET credit_due_date=? WHERE id=?",(due,sale_id))
             self.conn.execute("UPDATE sales SET sale_number=? WHERE id=?",(sale_number,sale_id))
             for (product,qty,price,amount),tax_amount in zip(normalized,line_taxes):
                 line_id=self.conn.execute("INSERT INTO sale_lines(sale_id,product_id,sku,description,quantity,unit_price,line_total,tax_amount) VALUES(?,?,?,?,?,?,?,?)",
@@ -3369,10 +3470,17 @@ class OperationsService:
             if paid:
                 self.conn.execute("INSERT INTO cash_entries(direction,amount,source_type,source_id,description,created_at,payment_method,reference,category) VALUES('in',?,?,?,?,?,?,?,?)",
                     (self._money(paid),"sale",sale_id,f"Payment received for {sale_number}",timestamp,payment_method,payment_reference,"Sales receipt"))
+            self.audit_event("Sale recorded","sale",sale_id,
+                f"{sale_number}; customer={customer_name}; total={self._money(total)}; paid={self._money(paid)}; balance={self._money(total-paid)}")
+            for product,qty,price,amount in normalized:
+                catalog_price=Decimal(str(product["selling_price"] or "0"))
+                if price!=catalog_price:
+                    self.audit_event("Price override","sale",sale_id,
+                        f"{product['sku']} {product['name']}: catalogue KES {self._money(catalog_price)} -> sold KES {self._money(price)}")
             self._enqueue("sales",sale_id,{"id":sale_id,"sale_number":sale_number,"customer_name":customer_name,
                 "status":"Completed","subtotal":self._money(subtotal),"tax_label":tax_label,"tax_rate":self._money(tax_rate),
                 "tax_total":self._money(tax_total),"total":self._money(total),"paid_total":self._money(paid),
-                "payment_method":payment_method,"payment_reference":payment_reference,"quote_id":quote_id,
+                "payment_method":payment_method,"payment_reference":payment_reference,"quote_id":quote_id,"credit_due_date":str((self.conn.execute("SELECT credit_due_date FROM sales WHERE id=?",(sale_id,)).fetchone() or [''])[0]),
                 "created_by":str(self.actor_username or ""),"served_by_name":served_by_name,
                 "served_by_code":served_by_code,"warranty_period":warranty_period,
                 "lines":[{"product_id":p["id"],"sku":p["sku"],"quantity":self._quantity(q),"unit_price":self._money(price),"line_total":self._money(amount),"tax_amount":self._money(tax)} for (p,q,price,amount),tax in zip(normalized,line_taxes)]},timestamp)
@@ -3774,6 +3882,8 @@ class OperationsService:
                 (new_status,self._money(net_subtotal),self._money(net_tax),self._money(net_total),self._money(net_paid),self._payment_status(net_total,net_paid),int(sale_id)))
             self._enqueue("sales_returns",return_id,{"id":return_id,"return_number":return_number,"sale_id":int(sale_id),"refund_amount":self._money(refund_total),"reason":str(reason).strip()[:300],"payment_method":payment_method,"payment_reference":payment_reference,"lines":[{"sale_line_id":line_id,"quantity":self._quantity(qty),"restocked":restock} for line_id,(qty,restock) in requested.items()]},timestamp)
             self._enqueue("sales",int(sale_id),{"id":int(sale_id),"sale_number":sale["sale_number"],"status":new_status},timestamp)
+            self.audit_event("Sale return processed","sale_return",return_id,
+                f"Sale {sale['sale_number']}; refund KES {self._money(refund_total)}; reason={str(reason).strip()[:300]}")
         return return_id
 
     def returned_quantity(self, sale_line_id):
@@ -4307,3 +4417,227 @@ class OperationsService:
                 "INSERT INTO loyalty_ledger(account_id,delta,reason,source_type,source_id,created_at) VALUES(?,?,?,?,?,?)",
                 (account_id, points, str(reason)[:120], str(source_type)[:40], source_id, timestamp))
         return points
+
+
+    # ------------------------------------------------------------------
+    # Product lending — temporary issue of shop-owned stock to customers
+    # ------------------------------------------------------------------
+    def _lending_manager_role(self, role):
+        if str(role) in ("Manager","Admin"):
+            return True
+        try:
+            caps=set(self.permission_provider(str(role)))
+            return {"manage_users","manage_finance"}.issubset(caps)
+        except Exception:
+            return False
+
+    def _ensure_product_lending_schema(self):
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS product_lending_loans(
+                id INTEGER PRIMARY KEY,
+                loan_number TEXT NOT NULL UNIQUE,
+                customer_id INTEGER NOT NULL REFERENCES customers(id),
+                product_id INTEGER NOT NULL REFERENCES products(id),
+                quantity TEXT NOT NULL,
+                unit_value TEXT NOT NULL,
+                total_value TEXT NOT NULL,
+                paid_total TEXT NOT NULL DEFAULT '0.00',
+                waived_total TEXT NOT NULL DEFAULT '0.00',
+                status TEXT NOT NULL DEFAULT 'On loan'
+                    CHECK(status IN ('On loan','Part-paid','Returned','Settled','Overdue','Converted to sale','Cancelled')),
+                serial_number TEXT NOT NULL DEFAULT '',
+                condition_out TEXT NOT NULL DEFAULT '',
+                condition_in TEXT NOT NULL DEFAULT '',
+                issue_date TEXT NOT NULL,
+                due_date TEXT NOT NULL,
+                issued_by TEXT NOT NULL,
+                approved_by TEXT NOT NULL DEFAULT '',
+                notes TEXT NOT NULL DEFAULT '',
+                returned_at TEXT NOT NULL DEFAULT '',
+                settled_at TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_product_lending_customer ON product_lending_loans(customer_id,status,id);
+            CREATE INDEX IF NOT EXISTS idx_product_lending_due ON product_lending_loans(due_date,status);
+            CREATE TABLE IF NOT EXISTS product_lending_payments(
+                id INTEGER PRIMARY KEY,
+                loan_id INTEGER NOT NULL REFERENCES product_lending_loans(id),
+                amount TEXT NOT NULL,
+                method TEXT NOT NULL DEFAULT 'Cash',
+                reference TEXT NOT NULL DEFAULT '',
+                received_by TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_product_lending_payments_loan ON product_lending_payments(loan_id,id);
+            CREATE TABLE IF NOT EXISTS product_lending_events(
+                id INTEGER PRIMARY KEY,
+                loan_id INTEGER NOT NULL REFERENCES product_lending_loans(id),
+                event TEXT NOT NULL,
+                details TEXT NOT NULL DEFAULT '',
+                actor TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+        """)
+        loan_columns={row[1] for row in self.conn.execute("PRAGMA table_info(product_lending_loans)").fetchall()}
+        if "waived_total" not in loan_columns:
+            self.conn.execute("ALTER TABLE product_lending_loans ADD COLUMN waived_total TEXT NOT NULL DEFAULT '0.00'")
+    def product_lending_summary(self):
+        self._require_module("Product Lending")
+        self._ensure_product_lending_schema()
+        rows=self.conn.execute("SELECT total_value,paid_total,waived_total,CASE WHEN returned_at<>'' AND status='Part-paid' THEN 'Returned · balance due' WHEN status IN ('On loan','Part-paid') AND returned_at='' AND due_date<date('now','localtime') THEN 'Overdue' ELSE status END AS status FROM product_lending_loans WHERE status NOT IN ('Cancelled','Returned','Settled','Converted to sale')").fetchall()
+        outstanding=sum((max(Decimal(r["total_value"])-Decimal(r["paid_total"])-Decimal(r["waived_total"] or "0"),Decimal("0")) for r in rows),Decimal("0.00"))
+        return {"active":len(rows),"outstanding":outstanding.quantize(Decimal("0.01")),
+                "overdue":sum(1 for r in rows if r["status"]=="Overdue")}
+    def product_lending_records(self, limit=1000):
+        self._require_module("Product Lending")
+        self._ensure_product_lending_schema()
+        return self.conn.execute("""SELECT l.*,c.name customer_name,p.sku,p.name product_name,p.unit,
+            CASE WHEN l.returned_at<>'' AND l.status='Part-paid' THEN 'Returned · balance due' WHEN l.status IN ('On loan','Part-paid') AND l.returned_at='' AND l.due_date<date('now','localtime') THEN 'Overdue' ELSE l.status END AS status
+            FROM product_lending_loans l JOIN customers c ON c.id=l.customer_id
+            JOIN products p ON p.id=l.product_id ORDER BY l.id DESC LIMIT ?""",(max(1,min(int(limit),5000)),)).fetchall()
+    def product_lending_customer_exposure(self, customer_id):
+        sales=self.customer_outstanding(customer_id=int(customer_id))
+        rows=self.conn.execute("""SELECT total_value,paid_total,waived_total FROM product_lending_loans
+            WHERE customer_id=? AND status IN ('On loan','Part-paid','Overdue')""",(int(customer_id),)).fetchall()
+        loans=sum((max(Decimal(r["total_value"])-Decimal(r["paid_total"])-Decimal(r["waived_total"] or "0"),Decimal("0")) for r in rows),Decimal("0.00"))
+        return (sales+loans).quantize(Decimal("0.01"))
+    def issue_product_loan(self, customer_id, product_id, quantity, due_date, condition_out="",
+                           serial_number="", notes="", approving_username="", approving_password=""):
+        self._require_module("Product Lending"); self._require("create")
+        self._ensure_product_lending_schema()
+        qty=self._decimal(quantity,"Quantity",minimum=Decimal("0.001"),places=3)
+        due=self._iso_date(due_date,"Due date")
+        if due<datetime.now().strftime("%Y-%m-%d"):
+            raise OperationError("The due date cannot be in the past.")
+        timestamp=self._stamp()
+        customer=self.conn.execute("SELECT * FROM customers WHERE id=?",(int(customer_id),)).fetchone()
+        product=self.conn.execute("SELECT * FROM products WHERE id=? AND active=1",(int(product_id),)).fetchone()
+        if not customer or not product: raise OperationError("Select an active registered customer and product.")
+        if not int(customer["credit_enabled"] or 0): raise OperationError("Enable a customer credit facility and set a limit before issuing products on loan.")
+        stock=self.stock_on_hand(int(product_id))
+        if qty>stock: raise OperationError(f"Insufficient stock. Available: {self._quantity(stock)} {product['unit']}.")
+        value=Decimal(str(product["selling_price"])); total=(qty*value).quantize(Decimal("0.01"))
+        if total<=0: raise OperationError("A product must have a positive selling value before it can be issued on loan.")
+        serial=str(serial_number or "").strip()[:100]
+        if serial:
+            duplicate=self.conn.execute("SELECT loan_number FROM product_lending_loans WHERE serial_number=? COLLATE NOCASE AND status IN ('On loan','Part-paid','Overdue') LIMIT 1",(serial,)).fetchone()
+            if duplicate: raise OperationError(f"Serial / IMEI {serial} is already on active loan {duplicate['loan_number']}.")
+        staff=self.conn.execute("SELECT username,role,lending_limit,active FROM systemdb.users WHERE username=? COLLATE NOCASE",(self.actor_username,)).fetchone()
+        if not staff or not staff["active"]: raise OperationError("The issuing employee account could not be verified.")
+        staff_limit=Decimal(str(staff["lending_limit"] or "0.00"))
+        is_manager=self._lending_manager_role(staff["role"])
+        approved_by=self.actor_username if is_manager else ""
+        if is_manager: staff_limit=Decimal("999999999.99")
+        if total>staff_limit:
+            if not approving_username: raise OperationError(f"This transaction exceeds your KSh {staff_limit:,.2f} lending authority. Manager/Admin approval is required.")
+            approver=self.conn.execute("SELECT username,role,active FROM systemdb.users WHERE username=? COLLATE NOCASE",(str(approving_username),)).fetchone()
+            if not approver or not approver["active"] or not self._lending_manager_role(approver["role"]) or approver["username"].casefold()==self.actor_username.casefold():
+                raise OperationError("A different active Manager/Admin account must approve this transaction.")
+            try:
+                saved=self.conn.execute("SELECT password_hash FROM systemdb.users WHERE username=? COLLATE NOCASE",(approver["username"],)).fetchone()[0]
+                salt,digest=str(saved).split(":",1)
+                valid=secrets.compare_digest(hashlib.pbkdf2_hmac("sha256",str(approving_password).encode(),bytes.fromhex(salt),240000).hex(),digest)
+            except Exception:
+                valid=False
+            if not valid: raise OperationError("Manager/Admin credentials were not verified. The lending override was rejected.")
+            approved_by=approver["username"]
+        with self._transaction():
+            exposure=self.product_lending_customer_exposure(int(customer_id))
+            limit=Decimal(str(customer["credit_limit"] or "0.00"))
+            if exposure+total>limit:
+                raise OperationError(f"Customer credit limit exceeded. Available: KSh {max(limit-exposure,Decimal('0')):,.2f}; requested: KSh {total:,.2f}.")
+            cur=self.conn.execute("""INSERT INTO product_lending_loans(loan_number,customer_id,product_id,quantity,unit_value,total_value,
+                paid_total,status,serial_number,condition_out,issue_date,due_date,issued_by,approved_by,notes,created_at,updated_at)
+                VALUES('PENDING',?,?,?,?,?,'0.00','On loan',?,?,?,?,?,?,?, ?,?)""",
+                (int(customer_id),int(product_id),self._quantity(qty),self._money(value),self._money(total),
+                 serial,str(condition_out or "")[:300],timestamp[:10],due,
+                 self.actor_username,approved_by,str(notes or "")[:1000],timestamp,timestamp))
+            loan_id=cur.lastrowid; number=self._next_number("PL",loan_id)
+            self.conn.execute("UPDATE product_lending_loans SET loan_number=? WHERE id=?",(number,loan_id))
+            movement=self.conn.execute("""INSERT INTO stock_movements(product_id,quantity_delta,movement_type,reference_type,reference_id,note,created_at)
+                VALUES(?,?,'product_loan_issue','product_lending',?,?,?)""",
+                (int(product_id),self._quantity(-qty),loan_id,f"Issued to {customer['name']} · {number}",timestamp)).lastrowid
+            event_id=self.conn.execute("INSERT INTO product_lending_events(loan_id,event,details,actor,created_at) VALUES(?,?,?,?,?)",
+                (loan_id,"Product issued",f"{number} · {product['name']} · {self._quantity(qty)} · KSh {self._money(total)}",self.actor_username,timestamp)).lastrowid
+            self.audit_event("Product loan issued","product_lending",loan_id,f"{number}; customer={customer['name']}; staff={self.actor_username}; approver={approved_by}; value={self._money(total)}")
+            self._enqueue("product_lending_loans",loan_id,{"id":loan_id,"loan_number":number,"customer_id":int(customer_id),"product_id":int(product_id),
+                "quantity":self._quantity(qty),"total_value":self._money(total),"status":"On loan","issued_by":self.actor_username,"approved_by":approved_by},timestamp)
+            self._enqueue("product_lending_events",event_id,{"id":event_id,"loan_id":loan_id,"event":"Product issued","actor":self.actor_username},timestamp)
+            self._enqueue("stock_movements",movement,{"id":movement,"product_id":int(product_id),"quantity_delta":self._quantity(-qty),"reference_type":"product_lending","reference_id":loan_id},timestamp)
+        return loan_id
+    def record_product_loan_payment(self, loan_id, amount, method="Cash", reference=""):
+        self._require_module("Product Lending"); self._require("manage_finance")
+        self._ensure_product_lending_schema()
+        value=self._decimal(amount,"Payment",minimum=Decimal("0.01"))
+        method=self._payment_method(method); reference=str(reference or "").strip()[:120]
+        if method=="M-Pesa" and not reference: raise OperationError("Enter the confirmed M-Pesa transaction code.")
+        timestamp=self._stamp()
+        with self._transaction():
+            loan=self.conn.execute("SELECT * FROM product_lending_loans WHERE id=?",(int(loan_id),)).fetchone()
+            if not loan or loan["status"] not in ("On loan","Part-paid","Overdue"): raise OperationError("This loan is not open for payment.")
+            due=Decimal(loan["total_value"])-Decimal(loan["paid_total"])-Decimal(loan["waived_total"] or "0")
+            if value>due: raise OperationError("Payment cannot exceed the outstanding loan balance.")
+            payment_id=self.conn.execute("INSERT INTO product_lending_payments(loan_id,amount,method,reference,received_by,created_at) VALUES(?,?,?,?,?,?)",
+                (int(loan_id),self._money(value),method,reference,self.actor_username,timestamp)).lastrowid
+            paid=Decimal(loan["paid_total"])+value; settled=(paid+Decimal(loan["waived_total"] or "0"))>=Decimal(loan["total_value"])
+            status="Settled" if settled else "Part-paid"
+            self.conn.execute("UPDATE product_lending_loans SET paid_total=?,status=?,settled_at=?,updated_at=? WHERE id=?",
+                (self._money(paid),status,timestamp if settled else "",timestamp,int(loan_id)))
+            cash_id=self.conn.execute("INSERT INTO cash_entries(direction,amount,source_type,source_id,description,created_at,payment_method,reference,category) VALUES('in',?,'product_lending',?,?,?,?,?,?)",
+                (self._money(value),int(loan_id),f"Product loan payment {loan['loan_number']}",timestamp,method,reference,"Product lending")).lastrowid
+            event_id=self.conn.execute("INSERT INTO product_lending_events(loan_id,event,details,actor,created_at) VALUES(?,?,?,?,?)",
+                (int(loan_id),"Payment received",f"KSh {self._money(value)} · balance KSh {self._money(max(Decimal(loan['total_value'])-paid-Decimal(loan['waived_total'] or '0'),Decimal('0')))}",self.actor_username,timestamp)).lastrowid
+            self.audit_event("Product loan payment","product_lending",loan_id,f"KSh {self._money(value)} · {method} · {reference}")
+            self._enqueue("product_lending_payments",payment_id,{"id":payment_id,"loan_id":int(loan_id),"amount":self._money(value),"method":method,"reference":reference},timestamp)
+            self._enqueue("cash_entries",cash_id,{"id":cash_id,"direction":"in","amount":self._money(value),"source_type":"product_lending","source_id":int(loan_id),"payment_method":method,"reference":reference,"category":"Product lending"},timestamp)
+            self._enqueue("product_lending_events",event_id,{"id":event_id,"loan_id":int(loan_id),"event":"Payment received","actor":self.actor_username},timestamp)
+            self._enqueue("product_lending_loans",int(loan_id),{"id":int(loan_id),"paid_total":self._money(paid),"status":status},timestamp)
+        return payment_id
+    def return_product_loan(self, loan_id, condition_in, notes="", approving_username="", approving_password=""):
+        self._require_module("Product Lending"); self._require("edit")
+        self._ensure_product_lending_schema()
+        condition=str(condition_in or "").strip()[:300]
+        if not condition: raise OperationError("Record the returned product's condition before accepting it.")
+        timestamp=self._stamp()
+        with self._transaction():
+            loan=self.conn.execute("SELECT * FROM product_lending_loans WHERE id=?",(int(loan_id),)).fetchone()
+            if not loan or loan["status"] not in ("On loan","Part-paid","Overdue"): raise OperationError("This loan is not open for return.")
+            if loan["returned_at"]:
+                raise OperationError("This product has already been received back.")
+            balance=Decimal(loan["total_value"])-Decimal(loan["paid_total"])-Decimal(loan["waived_total"] or "0")
+            approved_by=""
+            clear_balance=(balance>0 and condition.casefold()=="good")
+            if clear_balance:
+                if self._lending_manager_role(self.actor_role):
+                    approved_by=self.actor_username
+                else:
+                    approver=self.conn.execute("SELECT username,role,active,password_hash FROM systemdb.users WHERE username=? COLLATE NOCASE",(str(approving_username),)).fetchone()
+                    valid=False
+                    if approver and approver["active"] and self._lending_manager_role(approver["role"]) and approver["username"].casefold()!=self.actor_username.casefold():
+                        try:
+                            salt,digest=str(approver["password_hash"]).split(":",1)
+                            valid=secrets.compare_digest(hashlib.pbkdf2_hmac("sha256",str(approving_password).encode(),bytes.fromhex(salt),240000).hex(),digest)
+                        except Exception: valid=False
+                    if not valid: raise OperationError("A verified Manager/Admin must authorise clearing the remaining balance when accepting a returned product.")
+                    approved_by=approver["username"]
+            qty=Decimal(loan["quantity"])
+            next_status="Returned" if balance==0 or clear_balance else "Part-paid"
+            next_paid=loan["paid_total"]
+            next_waived=(Decimal(loan["waived_total"] or "0")+balance) if clear_balance else Decimal(loan["waived_total"] or "0")
+            self.conn.execute("UPDATE product_lending_loans SET status=?,paid_total=?,waived_total=?,condition_in=?,returned_at=?,settled_at=?,approved_by=CASE WHEN ?<>'' THEN ? ELSE approved_by END,notes=notes || ?,updated_at=? WHERE id=?",
+                (next_status,next_paid,self._money(next_waived),condition,timestamp,timestamp if next_status=="Returned" else "",approved_by,approved_by,(" · Return: "+str(notes)[:500]) if notes else "",timestamp,int(loan_id)))
+            restock_qty=Decimal("0") if condition.casefold() in ("damaged","incomplete") or (balance>0 and not clear_balance) else qty
+            movement=None
+            if restock_qty>0:
+                movement=self.conn.execute("""INSERT INTO stock_movements(product_id,quantity_delta,movement_type,reference_type,reference_id,note,created_at)
+                    VALUES(?,?,'product_loan_return','product_lending',?,?,?)""",
+                    (int(loan["product_id"]),self._quantity(restock_qty),int(loan_id),f"Returned loan {loan['loan_number']} · {condition}",timestamp)).lastrowid
+            event_id=self.conn.execute("INSERT INTO product_lending_events(loan_id,event,details,actor,created_at) VALUES(?,?,?,?,?)",
+                (int(loan_id),"Product returned",condition+" · "+str(notes)[:500]+(" · balance cleared by "+approved_by if approved_by else "")+(" · quarantined; not returned to sellable stock" if restock_qty==0 else ""),self.actor_username,timestamp)).lastrowid
+            self.audit_event("Product loan returned","product_lending",loan_id,condition+("; remaining balance "+self._money(balance)+" cleared by "+approved_by if approved_by else ""))
+            self._enqueue("product_lending_loans",int(loan_id),{"id":int(loan_id),"status":next_status,"paid_total":next_paid,"waived_total":self._money(next_waived),"condition_in":condition,"returned_at":timestamp,"approved_by":approved_by},timestamp)
+            self._enqueue("product_lending_events",event_id,{"id":event_id,"loan_id":int(loan_id),"event":"Product returned","actor":self.actor_username},timestamp)
+            if movement is not None:
+                self._enqueue("stock_movements",movement,{"id":movement,"product_id":int(loan["product_id"]),"quantity_delta":self._quantity(restock_qty),"reference_type":"product_lending","reference_id":int(loan_id)},timestamp)
+        return True

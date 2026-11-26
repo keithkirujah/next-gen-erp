@@ -1,0 +1,41 @@
+name: Windows validation and package
+
+# Avoid building every intermediate commit when a batch of changes is pushed.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+on:
+  push:
+    branches:
+      - feature/retail-super-upgrades
+  pull_request:
+    branches:
+      - main
+jobs:
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Create isolated environment
+        run: python -m venv .venv
+      - name: Install declared packages
+        run: .venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-build.txt
+      - name: Compile Python sources
+        run: .venv\Scripts\python.exe -m compileall -q .
+      - name: Verify dependency health in isolation
+        run: .venv\Scripts\python.exe -m pip check
+      - name: Build one-folder executable
+        run: .venv\Scripts\python.exe -m PyInstaller --clean --noconfirm --windowed --onedir --name "NextGen ERP" main.py
+      - name: Package portable Windows build
+        shell: pwsh
+        run: Compress-Archive -Path "dist/NextGen ERP/*" -DestinationPath "NextGenERP-Windows.zip" -Force
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: NextGen-ERP-Windows
+          path: NextGenERP-Windows.zip
+          if-no-files-found: error
+          retention-days: 14
