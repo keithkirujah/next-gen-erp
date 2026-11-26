@@ -36,6 +36,7 @@ from pos_ui import POSPage
 from returns_ui import ReturnsPage
 from product_lending_ui import ProductLendingPage
 from onboarding_tour import show_guided_tour
+from update_centre import UpdateCentreDialog
 
 POS_UNAVAILABLE_PROFILES = frozenset({"School / training centre", "Professional services"})
 
@@ -6229,8 +6230,14 @@ class App(QMainWindow):
             preserved_note=(" Workspaces kept enabled to retain existing records: " + ", ".join(preserved_modules) + ".") if profile_applied and preserved_modules else ""
             QMessageBox.information(self,"Saved",f"Business identity and settings were saved locally. {profile_note}{preserved_note} Profile workspaces use configurable records; connected industry workflows are still in progress.")
 
-        save.clicked.connect(do_save); row.addWidget(save); printbtn=QPushButton("🖨  Printer setup"); printbtn.clicked.connect(self.open_printer_setup); row.addWidget(printbtn); row.addStretch(); v.addLayout(row); v.addStretch(); return w
+        save.clicked.connect(do_save); row.addWidget(save); updatebtn=QPushButton("⬆  Update Centre"); updatebtn.clicked.connect(self.open_update_centre); row.addWidget(updatebtn);  printbtn=QPushButton("🖨  Printer setup"); printbtn.clicked.connect(self.open_printer_setup); row.addWidget(printbtn); row.addStretch(); v.addLayout(row); v.addStretch(); return w
 
+
+    def open_update_centre(self):
+        if not self._authorize('configure'):
+            return
+        dlg=UpdateCentreDialog(self, app_root=Path(__file__).resolve().parent, launcher=Path(__file__).resolve().parent/'START_ERP.bat')
+        dlg.exec()
 
     def open_infrastructure_dialog(self):
         """Configure multi-branch sync, eTIMS agent, and till/scale hardware."""
