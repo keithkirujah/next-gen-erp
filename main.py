@@ -34,6 +34,7 @@ import zipfile
 import urllib.error
 from pos_ui import POSPage
 from returns_ui import ReturnsPage
+from product_lending_ui import ProductLendingPage
 
 POS_UNAVAILABLE_PROFILES = frozenset({"School / training centre", "Professional services"})
 
@@ -53,6 +54,7 @@ MODULES = {
     "Sales": ("↗", "Customers, quotations, orders and invoices"),
     "Point of Sale": ("▣", "Fast counter checkout using the stock-backed sales engine"),
     "Returns Desk": ("↺", "Process refunds and restock returned goods"),
+    "Product Lending": ("⇄", "Temporary product issues, customer exposure and settlements"),
     "Purchases": ("⇩", "Suppliers and purchase orders"),
     "Inventory": ("⬡", "Products, stock and movements"),
     "Finance": ("◉", "Cashbook, expenses, payment channels and daily cashflow"),
@@ -101,6 +103,7 @@ PROTECTED_CAPABILITIES = {"configure", "backup", "sync", "delete"}
 DEFAULT_FIELDS = {
     "Sales": ["Customer", "Reference", "Amount (KES)", "Status"],
     "Point of Sale": ["Receipt", "Customer", "Items", "Total", "Payment status"],
+    "Product Lending": ["Customer", "Product", "Quantity", "Due date", "Status"],
     "Returns Desk": ["Return #", "Sale", "Refund", "Reason", "Status"],
     "Purchases": ["Supplier", "Reference", "Amount (KES)", "Status"],
     "Inventory": ["Product", "SKU", "Quantity", "Unit Price (KES)"],
@@ -2234,7 +2237,7 @@ class App(QMainWindow):
             if getattr(self, "sidebar_expanded", True):
                 display = {
                     "Sales": "Sales and Receipts", "Purchases": "Purchases and Suppliers",
-                    "Inventory": "Stock and Catalogue", "Finance": "Cashbook and Cashflow",
+                    "Inventory": "Stock and Catalogue", "Finance": "Cashbook and Cashflow", "Product Lending": "Product Lending",
                     "CRM": "Customers", "Repair Tickets": "Service and Repairs",
                     "Reports": "Business Reports", "Point of Sale": "Point of Sale",
                     "HR & Payroll": "HR and Payroll", "Batches & Expiry": "Batches and Expiry",
@@ -2311,7 +2314,7 @@ class App(QMainWindow):
         display_names={
             "Sales":"Sales and Receipts",
             "Purchases":"Purchases and Suppliers",
-            "Inventory":"Stock and Catalogue",
+            "Inventory":"Stock and Catalogue", "Product Lending":"Product Lending",
             "Finance":"Cashbook and Cashflow",
             "CRM":"Customers",
             "Repair Tickets":"Service and Repairs",
@@ -2432,6 +2435,7 @@ class App(QMainWindow):
         elif name=="Sales": page=self.sales_page()
         elif name=="Point of Sale": page=self.pos_page()
         elif name=="Returns Desk": page=self.returns_page()
+        elif name=="Product Lending": page=ProductLendingPage(self)
         elif name=="Purchases": page=self.purchases_page()
         elif name=="Finance": page=self.finance_page()
         elif name=="CRM": page=self.crm_page()
