@@ -245,7 +245,7 @@ class ProductLendingPage(QWidget):
             return
         balance = Decimal(row["total_value"]) - Decimal(row["paid_total"])
         approver = ("", "")
-        if balance > 0 and condition == "Good" and self.window.role not in ("Manager", "Admin"):
+        if balance > 0 and condition == "Good" and not (self.window.role in ("Manager", "Admin") or {"manage_users", "manage_finance"}.issubset(set(self.store.role_permissions(self.window.role)))):
             approver = _manager_credentials(self, self.store, "Approve return and clear balance")
             if not approver:
                 return
