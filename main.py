@@ -1783,12 +1783,29 @@ class LoginDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 26, 28, 24)
         layout.setSpacing(14)
-        brand = QLabel("⬡  NextGen ERP")
-        brand.setStyleSheet("font-size:22pt;font-weight:900;padding:4px 0 8px;")
+        brand_row = QHBoxLayout()
+        brand_row.setSpacing(12)
+        brand_mark = QLabel()
+        brand_mark.setFixedSize(58, 58)
+        brand_mark.setAlignment(Qt.AlignCenter)
+        brand_asset = Path(__file__).resolve().parent / "assets" / "nextgen-erp-mark.svg"
+        if brand_asset.exists():
+            mark = QPixmap(str(brand_asset))
+            if not mark.isNull():
+                brand_mark.setPixmap(mark.scaled(52, 52, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        brand_row.addWidget(brand_mark)
+        brand_copy = QVBoxLayout()
+        brand = QLabel("NextGen ERP")
+        brand.setStyleSheet("font-size:21pt;font-weight:900;padding:0;")
+        product_line = QLabel("SMARTER BUSINESS. BUILT TO ADAPT.")
+        product_line.setStyleSheet(f"font-size:7pt;font-weight:800;letter-spacing:1px;color:{palette['muted']};")
+        brand_copy.addWidget(brand)
+        brand_copy.addWidget(product_line)
+        brand_row.addLayout(brand_copy, 1)
+        layout.addLayout(brand_row)
         subtitle = QLabel("Sign in to your business workspace")
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet(f"color:{palette['muted']};")
-        layout.addWidget(brand)
         layout.addWidget(subtitle)
         form = QFormLayout()
         form.setSpacing(12)
@@ -1956,12 +1973,27 @@ class App(QMainWindow):
         self.sidebar_width_collapsed = 72
         self.sidebar=QFrame(); self.sidebar.setFixedWidth(self.sidebar_width_expanded); self.sidebar.setStyleSheet(f"background:{self.palette['sidebar']};border-right:1px solid {self.palette['border']};")
         sv=QVBoxLayout(self.sidebar); sv.setContentsMargins(10,14,10,12); sv.setSpacing(4)
+        brand_row = QHBoxLayout()
+        brand_row.setContentsMargins(4, 2, 4, 2)
+        brand_row.setSpacing(9)
+        self.brand_mark = QLabel()
+        self.brand_mark.setFixedSize(42, 42)
+        self.brand_mark.setAlignment(Qt.AlignCenter)
+        brand_asset = Path(__file__).resolve().parent / "assets" / "nextgen-erp-mark.svg"
+        if brand_asset.exists():
+            mark = QPixmap(str(brand_asset))
+            if not mark.isNull():
+                self.brand_mark.setPixmap(mark.scaled(38, 38, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        brand_row.addWidget(self.brand_mark)
         self.brand_label=QLabel()
         self.brand_label.setWordWrap(True)
         self.brand_label.setMaximumHeight(58)
-        self.brand_label.setStyleSheet("font-size:14pt;font-weight:900;padding:3px 5px;")
+        self.brand_label.setStyleSheet("font-size:14pt;font-weight:900;padding:3px 2px;")
+        brand_row.addWidget(self.brand_label, 1)
+        brand_host = QWidget()
+        brand_host.setLayout(brand_row)
         self.update_branding()
-        sv.addWidget(self.brand_label)
+        sv.addWidget(brand_host)
         self.tagline_label=QLabel("SMARTER BUSINESS. BUILT TO ADAPT."); self.tagline_label.setStyleSheet(f"color:{self.palette['muted']};font-size:7pt;font-weight:700;padding:0 7px 6px;"); sv.addWidget(self.tagline_label)
         scroll=QScrollArea(); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
         navhost=QWidget(); self.navlay=QVBoxLayout(navhost); self.navlay.setContentsMargins(0,8,0,8); self.navlay.setSpacing(3)
@@ -2175,11 +2207,15 @@ class App(QMainWindow):
         if self.sidebar_expanded:
             self.sidebar.setFixedWidth(self.sidebar_width_expanded)
             self.tagline_label.show()
-            self.brand_label.setStyleSheet("font-size:14pt;font-weight:900;padding:3px 5px;")
+            self.brand_mark.show()
+            self.brand_label.show()
+            self.brand_label.setStyleSheet("font-size:14pt;font-weight:900;padding:3px 2px;")
             self.sidebar_toggle.setText("☰")
         else:
             self.sidebar.setFixedWidth(self.sidebar_width_collapsed)
             self.tagline_label.hide()
+            self.brand_label.hide()
+            self.brand_mark.show()
             self.brand_label.setStyleSheet("font-size:11pt;font-weight:900;padding:2px;")
             self.sidebar_toggle.setText("»")
         self.rebuild_nav_labels()
@@ -6430,7 +6466,7 @@ class App(QMainWindow):
     def update_branding(self):
         business_name=self.store.setting("business_name", "NextGen").strip() or "NextGen"
         escaped=self._html_escape(business_name)
-        self.brand_label.setText(f"⬡  {escaped} <span style='color:{self.palette['blue']}'>ERP</span>")
+        self.brand_label.setText(f"<span style='font-size:10pt'>{escaped}</span><br><span style='font-size:7pt;letter-spacing:1px;color:{self.palette['blue']}'>NEXTGEN ERP</span>")
         self.setWindowTitle((self.store.setting("business_name", "Your Business").strip() or "Your Business") + " | NextGen ERP")
 
     def _capture_page_state(self,page):
