@@ -24,3 +24,13 @@ jobs:
         run: .venv\Scripts\python.exe -m pip check
       - name: Build one-folder executable
         run: .venv\Scripts\python.exe -m PyInstaller --clean --noconfirm --windowed --onedir --name "NextGen ERP" main.py
+      - name: Package portable Windows build
+        shell: pwsh
+        run: Compress-Archive -Path "dist/NextGen ERP/*" -DestinationPath "NextGenERP-Windows.zip" -Force
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: NextGen-ERP-Windows
+          path: NextGenERP-Windows.zip
+          if-no-files-found: error
+          retention-days: 14
