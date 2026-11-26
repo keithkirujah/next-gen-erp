@@ -184,7 +184,7 @@ class ProductLendingPage(QWidget):
         user = self.store.conn.execute("SELECT lending_limit FROM users WHERE username=? COLLATE NOCASE",
                                        (self.window.username,)).fetchone()
         limit = Decimal(str(user["lending_limit"] or "0")) if user else Decimal("0")
-        if amount > limit:
+        if amount > limit and self.window.role not in ("Manager", "Admin"):
             approver = _manager_credentials(self, self.store, "Manager approval required")
             if not approver:
                 return
@@ -243,7 +243,7 @@ class ProductLendingPage(QWidget):
             return
         balance = Decimal(row["total_value"]) - Decimal(row["paid_total"])
         approver = ("", "")
-        if balance > 0 and condition == "Good":
+        if balance > 0 and condition == "Good" and self.window.role not in ("Manager", "Admin"):
             approver = _manager_credentials(self, self.store, "Approve return and clear balance")
             if not approver:
                 return
