@@ -4,6 +4,7 @@ import secrets
 from decimal import Decimal, InvalidOperation
 
 from PySide6.QtCore import Qt, QDate
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QDialog,
@@ -299,7 +300,7 @@ class ProductLendingPage(QWidget):
                     item.setData(Qt.UserRole, int(row["id"]))
                 self.table.setItem(i, j, item)
             if row["status"] == "Overdue":
-                self.table.item(i, 7).setForeground(Qt.red)
+                self.table.item(i, 7).setForeground(QColor(self._c('red', '#d45b5b')))
         self.table.blockSignals(False)
         self.result_count.setText(f"{len(filtered):,} agreement(s)")
         selected_row = next((i for i, row in enumerate(filtered) if int(row["id"]) == current_id), -1)
