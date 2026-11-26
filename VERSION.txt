@@ -1,0 +1,6 @@
+NextGen ERP Desktop — compact build
+2026-11-14
+
+- Document preview shows the real invoice before print (Windows 10/11)
+- One-page auto-fit, invoice backdate+time, Staff POS, light dashboard
+- Tests and internal notes removed for a leaner install
