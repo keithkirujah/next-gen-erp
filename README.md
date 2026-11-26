@@ -87,3 +87,8 @@ Manifest example:
 ```
 
 Only application files are permitted; database and user data paths are explicitly excluded. This first version supports **offline full application packages only** (not online update checks or independent module updates). Hashes detect package corruption, but do not authenticate who produced a package—only install packages from a source you trust. The updater currently performs rollback if file-copy installation fails; post-launch health-check rollback and signed packages are planned hardening work.
+
+
+## Experience and performance
+
+The ongoing Experience Upgrade prioritizes a premium interface without sacrificing speed. Decorative motion and continuous effects are off by default; see [PERFORMANCE_AND_UX.md](PERFORMANCE_AND_UX.md) for performance budgets and UX principles.
