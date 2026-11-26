@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushBu
 from PySide6.QtCore import QTimer
 
 CURRENT_VERSION = "2.0.0-dev"
-MAX_PACKAGE_BYTES = 250 * 1024 * 1024
+MAX_PACKAGE_BYTES = 250 * 1024 * 1024\nMAX_UNPACKED_BYTES = 500 * 1024 * 1024
 SAFE_ROOTS = {"assets", "profiles", "ui", "modules"}
 SAFE_EXTS = {".py", ".json", ".svg", ".png", ".ico", ".bat", ".md"}
 PROTECTED = {"nextgen_erp.db", "settings.json"}
@@ -29,7 +29,7 @@ def inspect_package(package):
         if not isinstance(files,dict) or not files: raise ValueError("Manifest must list files and SHA-256 hashes.")
         verified=[]
         for rel,digest in files.items():
-            if not _safe_rel(rel): raise ValueError("Unsafe package path: "+str(rel))
+            if not _safe_rel(rel) or ":" in str(rel): raise ValueError("Unsafe package path: "+str(rel))
             rp=Path(rel.replace("\\","/"))
             if rp.suffix.lower() not in SAFE_EXTS or rp.name.lower() in PROTECTED: raise ValueError("Protected or unsupported file: "+str(rel))
             if len(rp.parts)>1 and rp.parts[0].lower() not in SAFE_ROOTS: raise ValueError("Path outside permitted app folders: "+str(rel))
@@ -79,10 +79,10 @@ class UpdateCentreDialog(QDialog):
             pairs=[(payload/rel,self.app_root/rel,backup/rel) for rel,_ in files]
             cmd=["@echo off","setlocal","timeout /t 3 /nobreak >nul","mkdir "+_quote(backup)]
             for src,dst,bak in pairs:
-                cmd += ["mkdir "+_quote(dst.parent),"mkdir "+_quote(bak.parent),"if exist "+_quote(dst)+" copy /y "+_quote(dst)+" "+_quote(bak)+" >nul"]
+                cmd += ["mkdir "+_quote(dst.parent),"mkdir "+_quote(bak.parent),"if exist "+_quote(dst)+" copy /y "+_quote(dst)+" "+_quote(bak)+" >nul","if not exist "+_quote(dst)+" echo new>"+_quote(str(staging/(str(len(cmd))+".new")))]
             for src,dst,bak in pairs: cmd += ["copy /y "+_quote(src)+" "+_quote(dst)+" >nul","if errorlevel 1 goto rollback"]
             cmd += ["start \"\" "+_quote(self.launcher),"goto done",":rollback"]
-            for src,dst,bak in pairs: cmd += ["if exist "+_quote(bak)+" copy /y "+_quote(bak)+" "+_quote(dst)+" >nul"]
+            for index,(src,dst,bak) in enumerate(pairs): cmd += ["if exist "+_quote(bak)+" copy /y "+_quote(bak)+" "+_quote(dst)+" >nul","if exist "+_quote(str(staging/(str(index)+".new"))+" del "+_quote(dst)]
             cmd += ["echo Install failed; rollback attempted.>>"+_quote(staging/"update.log"),":done","endlocal"]
             script=staging/"apply_update.cmd"; script.write_text("\r\n".join(cmd),encoding="utf-8")
             subprocess.Popen(["cmd.exe","/c","start","",str(script)],creationflags=getattr(subprocess,"CREATE_NEW_CONSOLE",0))
