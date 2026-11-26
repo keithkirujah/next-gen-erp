@@ -42,6 +42,7 @@ class CommandPalette(QDialog):
         self.chosen = None
         self.setModal(True)
         self.setMinimumWidth(520)
+        self.resize(600, 430)
         if style:
             self.setStyleSheet(style)
         v = QVBoxLayout(self)
@@ -53,8 +54,17 @@ class CommandPalette(QDialog):
         self.list = QListWidget(); self.list.setMinimumHeight(280)
         self.list.itemActivated.connect(lambda *_: self._accept_current())
         v.addWidget(self.list)
+        self.status = QLabel("")
+        self.status.setStyleSheet("color:#8290a6;font-size:9pt;padding:2px 3px;")
+        v.addWidget(self.status)
         self._refill("")
         self.edit.setFocus()
+        # Keep the palette anchored to the active application rather than
+        # appearing at an arbitrary OS position.
+        if parent is not None:
+            frame = parent.frameGeometry()
+            self.move(frame.center().x() - self.width() // 2,
+                      frame.center().y() - self.height() // 2)
 
     def keyPressEvent(self, e):
         if e.key() in (Qt.Key.Key_Down, Qt.Key.Key_Up):
@@ -71,6 +81,9 @@ class CommandPalette(QDialog):
             self.list.addItem(item)
         if self.list.count():
             self.list.setCurrentRow(0)
+            self.status.setText(f"{self.list.count()} matches · ↑↓ navigate · Enter open")
+        else:
+            self.status.setText("No matching commands. Try a shorter keyword or module name.")
 
     def _accept_current(self):
         item = self.list.currentItem()
