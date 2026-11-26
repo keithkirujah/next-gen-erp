@@ -4485,7 +4485,7 @@ class OperationsService:
     def product_lending_summary(self):
         self._require_module("Product Lending")
         self._ensure_product_lending_schema()
-        rows=self.conn.execute("SELECT total_value,paid_total,CASE WHEN returned_at<>'' AND status='Part-paid' THEN 'Returned · balance due' WHEN status IN ('On loan','Part-paid') AND returned_at='' AND due_date<date('now','localtime') THEN 'Overdue' ELSE status END AS status FROM product_lending_loans WHERE status NOT IN ('Cancelled','Returned','Settled','Converted to sale')").fetchall()
+        rows=self.conn.execute("SELECT total_value,paid_total,waived_total,CASE WHEN returned_at<>'' AND status='Part-paid' THEN 'Returned · balance due' WHEN status IN ('On loan','Part-paid') AND returned_at='' AND due_date<date('now','localtime') THEN 'Overdue' ELSE status END AS status FROM product_lending_loans WHERE status NOT IN ('Cancelled','Returned','Settled','Converted to sale')").fetchall()
         outstanding=sum((max(Decimal(r["total_value"])-Decimal(r["paid_total"])-Decimal(r["waived_total"] or "0"),Decimal("0")) for r in rows),Decimal("0.00"))
         return {"active":len(rows),"outstanding":outstanding.quantize(Decimal("0.01")),
                 "overdue":sum(1 for r in rows if r["status"]=="Overdue")}
