@@ -3975,18 +3975,19 @@ class App(QMainWindow):
             audit=QPushButton("Activity audit"); audit.clicked.connect(self._show_audit_events); row.addWidget(audit)
             credit_report=QPushButton("Credit activity report"); credit_report.clicked.connect(self._show_credit_activity); row.addWidget(credit_report)
         row.addStretch(); v.addLayout(row)
-        table=self._table(["ID","CUSTOMER","CONTACT","EMAIL","CREDIT","LIMIT (KES)","BALANCE (KES)","CREATED"])
+        table=self._table(["ID","CUSTOMER","CONTACT","EMAIL","CREDIT","LIMIT (KES)","BALANCE (KES)","OVERDUE (KES)","CREATED"])
         rows=self.store.operations.customers()
         enriched=[]
         for r in rows:
             try:
                 summary=self.store.operations.customer_credit_summary(r["id"])
-            except Exception: summary={"enabled":False,"limit":Decimal("0"),"outstanding":Decimal("0")}
+            except Exception: summary={"enabled":False,"limit":Decimal("0"),"outstanding":Decimal("0"),"overdue":Decimal("0")}
+            summary["overdue"]=self.store.operations.customer_overdue_balance(r["id"])
             enriched.append((r,summary))
         table.setRowCount(len(enriched))
         for i,(r,summary) in enumerate(enriched):
             values=[r["id"],r["name"],r["contact"],r["email"],"Enabled" if summary["enabled"] else "Disabled",
-                    f"{summary['limit']:.2f}",f"{summary['outstanding']:.2f}",r["created_at"]]
+                    f"{summary['limit']:.2f}",f"{summary['outstanding']:.2f}",f"{summary['overdue']:.2f}",r["created_at"]]
             for j,val in enumerate(values):
                 item=QTableWidgetItem(str(val)); table.setItem(i,j,item)
         table.setColumnHidden(0,True)
@@ -4021,13 +4022,13 @@ class App(QMainWindow):
         elif period=="Last 7 days": since=(datetime.now()-__import__("datetime").timedelta(days=7)).strftime("%Y-%m-%d")
         else: since=None
         dlg=QDialog(self); dlg.setWindowTitle("Customer credit activity · KES"); dlg.resize(1100,620)
-        root=QVBoxLayout(dlg); table=QTableWidget(0,7)
-        table.setHorizontalHeaderLabels(["CUSTOMER","CREDIT LIMIT","USED / OUTSTANDING","AVAILABLE","CREDIT CREATED IN PERIOD","REPAID IN PERIOD","TERMS"])
+        root=QVBoxLayout(dlg); table=QTableWidget(0,8)
+        table.setHorizontalHeaderLabels(["CUSTOMER","CREDIT LIMIT","USED / OUTSTANDING","AVAILABLE","OVERDUE","CREDIT CREATED IN PERIOD","REPAID IN PERIOD","TERMS"])
         customers=self.store.operations.customers(); table.setRowCount(len(customers))
         for i,c in enumerate(customers):
             summary=self.store.operations.customer_credit_summary(c["id"])
             activity=self.store.operations.credit_activity_summary(c["id"],since)
-            vals=[c["name"],f"{summary['limit']:.2f}",f"{summary['outstanding']:.2f}",f"{summary['available']:.2f}",
+            vals=[c["name"],f"{summary['limit']:.2f}",f"{summary['outstanding']:.2f}",f"{summary['available']:.2f}",f"{self.store.operations.customer_overdue_balance(c['id']):.2f}",
                   f"{activity['credit_extended']:.2f}",f"{activity['repaid']:.2f}",f"{summary['credit_days']} days"]
             for j,val in enumerate(vals):table.setItem(i,j,QTableWidgetItem(str(val)))
         table.horizontalHeader().setSectionResizeMode(0,QHeaderView.Stretch); table.setAlternatingRowColors(True)
