@@ -3965,15 +3965,66 @@ class App(QMainWindow):
                 self._refresh_operation_page("Finance")
 
     def crm_page(self):
-        w,v=self.page_container("Customers","Customer directory used by sales, repairs, payments and service-history follow-up.")
+        w,v=self.page_container("Customers","Customer directory, negotiated pricing, credit facilities and service-history follow-up.")
         row=QHBoxLayout()
         if "create" in self.store.role_permissions(self.role):
             add=QPushButton("＋ Add customer"); add.setObjectName("primary"); add.clicked.connect(lambda:self.create_party_dialog("customer")); row.addWidget(add)
-        legacy=QPushButton("View legacy CRM records"); legacy.clicked.connect(lambda:self._show_legacy_records("CRM")); row.addWidget(legacy); row.addStretch(); v.addLayout(row)
-        table=self._table(["ID","CUSTOMER","CONTACT","EMAIL","CREATED"])
+        legacy=QPushButton("View legacy CRM records"); legacy.clicked.connect(lambda:self._show_legacy_records("CRM")); row.addWidget(legacy)
+        if self.role=="Admin":
+            credit=QPushButton("Manage credit facility"); credit.clicked.connect(lambda:self._manage_customer_credit(table)); row.addWidget(credit)
+            audit=QPushButton("Activity audit"); audit.clicked.connect(self._show_audit_events); row.addWidget(audit)
+        row.addStretch(); v.addLayout(row)
+        table=self._table(["ID","CUSTOMER","CONTACT","EMAIL","CREDIT","LIMIT (KES)","BALANCE (KES)","CREATED"])
         rows=self.store.operations.customers()
-        self._fill_table(table,rows,lambda r:[r["id"],r["name"],r["contact"],r["email"],r["created_at"]],hide_id=True)
+        enriched=[]
+        for r in rows:
+            try:
+                summary=self.store.operations.customer_credit_summary(r["id"])
+            except Exception: summary={"enabled":False,"limit":Decimal("0"),"outstanding":Decimal("0")}
+            enriched.append((r,summary))
+        table.setRowCount(len(enriched))
+        for i,(r,summary) in enumerate(enriched):
+            values=[r["id"],r["name"],r["contact"],r["email"],"Enabled" if summary["enabled"] else "Disabled",
+                    f"{summary['limit']:.2f}",f"{summary['outstanding']:.2f}",r["created_at"]]
+            for j,val in enumerate(values):
+                item=QTableWidgetItem(str(val)); table.setItem(i,j,item)
+        table.setColumnHidden(0,True)
+        table.setSortingEnabled(True)
         v.addWidget(table,1); return w
+
+    def _manage_customer_credit(self, table):
+        if self.role!="Admin": return
+        row=table.currentRow()
+        if row<0:
+            QMessageBox.information(self,"Select customer","Select a customer row first."); return
+        customer_id=int(table.item(row,0).text())
+        customer=self.store.operations.conn.execute("SELECT * FROM customers WHERE id=?",(customer_id,)).fetchone()
+        if not customer: return
+        enabled,ok=QInputDialog.getItem(self,"Credit facility",f"{customer['name']} · enable credit?",["Enabled","Disabled"],0 if customer["credit_enabled"] else 1,False)
+        if not ok:return
+        limit,ok=QInputDialog.getDouble(self,"Credit limit",f"Maximum outstanding for {customer['name']} (KES):",float(customer["credit_limit"] or 0),0,100000000,2)
+        if not ok:return
+        days,ok=QInputDialog.getInt(self,"Repayment terms","Credit duration in days (0 = due immediately):",int(customer["credit_days"] or 0),0,3650)
+        if not ok:return
+        try:
+            self.store.operations.configure_customer_credit(customer_id,enabled=="Enabled",limit,days)
+            self.store.log(self.username,"Credit facility changed",f"{customer['name']}: {enabled}, KES {limit:.2f}, {days} days")
+            self.show_page("CRM")
+        except Exception as exc: QMessageBox.warning(self,"Credit update failed",str(exc))
+
+    def _show_audit_events(self):
+        if self.role!="Admin": return
+        dlg=QDialog(self); dlg.setWindowTitle("Activity audit log"); dlg.resize(1050,600)
+        root=QVBoxLayout(dlg); table=QTableWidget(0,7)
+        table.setHorizontalHeaderLabels(["ID","USER","ROLE","ACTION","ENTITY","DETAILS","TIMESTAMP"])
+        rows=self.store.operations.conn.execute("SELECT * FROM audit_events ORDER BY id DESC LIMIT 1000").fetchall()
+        table.setRowCount(len(rows))
+        for i,r in enumerate(rows):
+            for j,val in enumerate([r["id"],r["username"],r["role"],r["action"],r["entity_type"],r["details"],r["created_at"]]):
+                table.setItem(i,j,QTableWidgetItem(str(val)))
+        table.horizontalHeader().setSectionResizeMode(5,QHeaderView.Stretch)
+        table.setAlternatingRowColors(True); root.addWidget(table)
+        close=QPushButton("Close"); close.clicked.connect(dlg.accept); root.addWidget(close); dlg.exec()
 
     def create_party_dialog(self, kind):
         if not self._authorize("create"): return
