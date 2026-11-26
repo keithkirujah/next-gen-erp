@@ -215,12 +215,7 @@ class AuroraViewport(QWidget):
             g.setColorAt(1, rgba(pal[key], 0))
             p.setBrush(g)
             p.drawEllipse(QPointF(cx, cy), rr, rr)
-        # Sparse grid — previous dense point grid was expensive on large viewports.
-        p.setPen(QPen(rgba(pal["text"], 9 if dark else 7), 1))
-        step = 48
-        for gx in range(0, int(w), step):
-            for gy in range(0, int(h), step):
-                p.drawPoint(gx, gy)
+        # Omit decorative dot-grid loops; the gradient background provides depth with fewer painter operations.
 
 
 # ── glass card base ───────────────────────────────────────────────────────────
@@ -1409,7 +1404,7 @@ class DashboardView(QScrollArea):
     search = Signal(str)
     set_goal = Signal()
 
-    def __init__(self, store, pal, dark=False, user_name="", currency="KES", parent=None):
+    def __init__(self, store, pal, dark=False, user_name="", currency="KES", allowed_modules=None, parent=None):
         super().__init__(parent)
         self.store = store
         self.pal = pal
@@ -1450,6 +1445,9 @@ class DashboardView(QScrollArea):
                 ("⚒", "Repairs", "Repair Tickets", "orange", "Service jobs"),
                 ("▤", "Reports", "Reports", "cyan", "Business reports"),
                 ("◎", "Customers", "CRM", "pink", "Customer list")]
+        allowed = set(allowed_modules or ())
+        if allowed:
+            defs = [item for item in defs if item[2] in allowed]
         self.tiles = []
         for i, (g, t, tg, c, h) in enumerate(defs):
             tile = Tile(pal, g, t, tg, c, h)
@@ -1500,7 +1498,7 @@ class DashboardView(QScrollArea):
                 w.appear = 0.0
 
         self._timer = QTimer(self)
-        self._timer.setInterval(60_000)
+        self._timer.setInterval(120_000)
         self._timer.timeout.connect(lambda: self.refresh(animate=False))
         QTimer.singleShot(30, self.refresh)
 
