@@ -4442,6 +4442,7 @@ class OperationsService:
                 unit_value TEXT NOT NULL,
                 total_value TEXT NOT NULL,
                 paid_total TEXT NOT NULL DEFAULT '0.00',
+                waived_total TEXT NOT NULL DEFAULT '0.00',
                 status TEXT NOT NULL DEFAULT 'On loan'
                     CHECK(status IN ('On loan','Part-paid','Returned','Settled','Overdue','Converted to sale','Cancelled')),
                 serial_number TEXT NOT NULL DEFAULT '',
@@ -4478,11 +4479,14 @@ class OperationsService:
                 created_at TEXT NOT NULL
             );
         """)
+        loan_columns={row[1] for row in self.conn.execute("PRAGMA table_info(product_lending_loans)").fetchall()}
+        if "waived_total" not in loan_columns:
+            self.conn.execute("ALTER TABLE product_lending_loans ADD COLUMN waived_total TEXT NOT NULL DEFAULT '0.00'")
     def product_lending_summary(self):
         self._require_module("Product Lending")
         self._ensure_product_lending_schema()
         rows=self.conn.execute("SELECT total_value,paid_total,CASE WHEN returned_at<>'' AND status='Part-paid' THEN 'Returned · balance due' WHEN status IN ('On loan','Part-paid') AND returned_at='' AND due_date<date('now','localtime') THEN 'Overdue' ELSE status END AS status FROM product_lending_loans WHERE status NOT IN ('Cancelled','Returned','Settled','Converted to sale')").fetchall()
-        outstanding=sum((max(Decimal(r["total_value"])-Decimal(r["paid_total"]),Decimal("0")) for r in rows),Decimal("0.00"))
+        outstanding=sum((max(Decimal(r["total_value"])-Decimal(r["paid_total"])-Decimal(r["waived_total"] or "0"),Decimal("0")) for r in rows),Decimal("0.00"))
         return {"active":len(rows),"outstanding":outstanding.quantize(Decimal("0.01")),
                 "overdue":sum(1 for r in rows if r["status"]=="Overdue")}
     def product_lending_records(self, limit=1000):
@@ -4494,9 +4498,9 @@ class OperationsService:
             JOIN products p ON p.id=l.product_id ORDER BY l.id DESC LIMIT ?""",(max(1,min(int(limit),5000)),)).fetchall()
     def product_lending_customer_exposure(self, customer_id):
         sales=self.customer_outstanding(customer_id=int(customer_id))
-        rows=self.conn.execute("""SELECT total_value,paid_total FROM product_lending_loans
+        rows=self.conn.execute("""SELECT total_value,paid_total,waived_total FROM product_lending_loans
             WHERE customer_id=? AND status IN ('On loan','Part-paid','Overdue')""",(int(customer_id),)).fetchall()
-        loans=sum((max(Decimal(r["total_value"])-Decimal(r["paid_total"]),Decimal("0")) for r in rows),Decimal("0.00"))
+        loans=sum((max(Decimal(r["total_value"])-Decimal(r["paid_total"])-Decimal(r["waived_total"] or "0"),Decimal("0")) for r in rows),Decimal("0.00"))
         return (sales+loans).quantize(Decimal("0.01"))
     def issue_product_loan(self, customer_id, product_id, quantity, due_date, condition_out="",
                            serial_number="", notes="", approving_username="", approving_password=""):
@@ -4572,7 +4576,7 @@ class OperationsService:
         with self._transaction():
             loan=self.conn.execute("SELECT * FROM product_lending_loans WHERE id=?",(int(loan_id),)).fetchone()
             if not loan or loan["status"] not in ("On loan","Part-paid","Overdue"): raise OperationError("This loan is not open for payment.")
-            due=Decimal(loan["total_value"])-Decimal(loan["paid_total"])
+            due=Decimal(loan["total_value"])-Decimal(loan["paid_total"])-Decimal(loan["waived_total"] or "0")
             if value>due: raise OperationError("Payment cannot exceed the outstanding loan balance.")
             payment_id=self.conn.execute("INSERT INTO product_lending_payments(loan_id,amount,method,reference,received_by,created_at) VALUES(?,?,?,?,?,?)",
                 (int(loan_id),self._money(value),method,reference,self.actor_username,timestamp)).lastrowid
@@ -4601,7 +4605,7 @@ class OperationsService:
             if not loan or loan["status"] not in ("On loan","Part-paid","Overdue"): raise OperationError("This loan is not open for return.")
             if loan["returned_at"]:
                 raise OperationError("This product has already been received back.")
-            balance=Decimal(loan["total_value"])-Decimal(loan["paid_total"])
+            balance=Decimal(loan["total_value"])-Decimal(loan["paid_total"])-Decimal(loan["waived_total"] or "0")
             approved_by=""
             clear_balance=(balance>0 and condition.casefold()=="good")
             if clear_balance:
@@ -4619,9 +4623,10 @@ class OperationsService:
                     approved_by=approver["username"]
             qty=Decimal(loan["quantity"])
             next_status="Returned" if balance==0 or clear_balance else "Part-paid"
-            next_paid=loan["total_value"] if clear_balance else loan["paid_total"]
-            self.conn.execute("UPDATE product_lending_loans SET status=?,paid_total=?,condition_in=?,returned_at=?,settled_at=?,approved_by=CASE WHEN ?<>'' THEN ? ELSE approved_by END,notes=notes || ?,updated_at=? WHERE id=?",
-                (next_status,next_paid,condition,timestamp,timestamp if next_status=="Returned" else "",approved_by,approved_by,(" · Return: "+str(notes)[:500]) if notes else "",timestamp,int(loan_id)))
+            next_paid=loan["paid_total"]
+            next_waived=(Decimal(loan["waived_total"] or "0")+balance) if clear_balance else Decimal(loan["waived_total"] or "0")
+            self.conn.execute("UPDATE product_lending_loans SET status=?,paid_total=?,waived_total=?,condition_in=?,returned_at=?,settled_at=?,approved_by=CASE WHEN ?<>'' THEN ? ELSE approved_by END,notes=notes || ?,updated_at=? WHERE id=?",
+                (next_status,next_paid,self._money(next_waived),condition,timestamp,timestamp if next_status=="Returned" else "",approved_by,approved_by,(" · Return: "+str(notes)[:500]) if notes else "",timestamp,int(loan_id)))
             restock_qty=Decimal("0") if condition.casefold() in ("damaged","incomplete") or (balance>0 and not clear_balance) else qty
             movement=None
             if restock_qty>0:
@@ -4631,7 +4636,7 @@ class OperationsService:
             event_id=self.conn.execute("INSERT INTO product_lending_events(loan_id,event,details,actor,created_at) VALUES(?,?,?,?,?)",
                 (int(loan_id),"Product returned",condition+" · "+str(notes)[:500]+(" · balance cleared by "+approved_by if approved_by else "")+(" · quarantined; not returned to sellable stock" if restock_qty==0 else ""),self.actor_username,timestamp)).lastrowid
             self.audit_event("Product loan returned","product_lending",loan_id,condition+("; remaining balance "+self._money(balance)+" cleared by "+approved_by if approved_by else ""))
-            self._enqueue("product_lending_loans",int(loan_id),{"id":int(loan_id),"status":next_status,"paid_total":next_paid,"condition_in":condition,"returned_at":timestamp,"approved_by":approved_by},timestamp)
+            self._enqueue("product_lending_loans",int(loan_id),{"id":int(loan_id),"status":next_status,"paid_total":next_paid,"waived_total":self._money(next_waived),"condition_in":condition,"returned_at":timestamp,"approved_by":approved_by},timestamp)
             self._enqueue("product_lending_events",event_id,{"id":event_id,"loan_id":int(loan_id),"event":"Product returned","actor":self.actor_username},timestamp)
             if movement is not None:
                 self._enqueue("stock_movements",movement,{"id":movement,"product_id":int(loan["product_id"]),"quantity_delta":self._quantity(restock_qty),"reference_type":"product_lending","reference_id":int(loan_id)},timestamp)
