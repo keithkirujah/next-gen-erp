@@ -4481,7 +4481,6 @@ class OperationsService:
             FROM product_lending_loans l JOIN customers c ON c.id=l.customer_id
             JOIN products p ON p.id=l.product_id ORDER BY l.id DESC LIMIT ?""",(max(1,min(int(limit),5000)),)).fetchall()
     def product_lending_customer_exposure(self, customer_id):
-        self._ensure_product_lending_schema()
         sales=self.customer_outstanding(customer_id=int(customer_id))
         rows=self.conn.execute("""SELECT total_value,paid_total FROM product_lending_loans
             WHERE customer_id=? AND status IN ('On loan','Part-paid','Overdue')""",(int(customer_id),)).fetchall()
@@ -4577,9 +4576,12 @@ class OperationsService:
         with self._transaction():
             loan=self.conn.execute("SELECT * FROM product_lending_loans WHERE id=?",(int(loan_id),)).fetchone()
             if not loan or loan["status"] not in ("On loan","Part-paid","Overdue"): raise OperationError("This loan is not open for return.")
+            if loan["returned_at"]:
+                raise OperationError("This product has already been received back.")
             balance=Decimal(loan["total_value"])-Decimal(loan["paid_total"])
             approved_by=""
-            if balance>0:
+            clear_balance=(balance>0 and condition.casefold()=="good")
+            if clear_balance:
                 approver=self.conn.execute("SELECT username,role,active,password_hash FROM systemdb.users WHERE username=? COLLATE NOCASE",(str(approving_username),)).fetchone()
                 valid=False
                 if approver and approver["active"] and approver["role"] in ("Manager","Admin") and approver["username"].casefold()!=self.actor_username.casefold():
@@ -4590,9 +4592,11 @@ class OperationsService:
                 if not valid: raise OperationError("A verified Manager/Admin must authorise clearing the remaining balance when accepting a returned product.")
                 approved_by=approver["username"]
             qty=Decimal(loan["quantity"])
-            self.conn.execute("UPDATE product_lending_loans SET status='Returned',paid_total=total_value,condition_in=?,returned_at=?,settled_at=?,approved_by=CASE WHEN ?<>'' THEN ? ELSE approved_by END,notes=notes || ?,updated_at=? WHERE id=?",
-                (condition,timestamp,timestamp,approved_by,approved_by,(" · Return: "+str(notes)[:500]) if notes else "",timestamp,int(loan_id)))
-            restock_qty=Decimal("0") if condition.casefold() in ("damaged","incomplete") else qty
+            next_status="Returned" if balance==0 or clear_balance else "Part-paid"
+            next_paid=loan["total_value"] if clear_balance else loan["paid_total"]
+            self.conn.execute("UPDATE product_lending_loans SET status=?,paid_total=?,condition_in=?,returned_at=?,settled_at=?,approved_by=CASE WHEN ?<>'' THEN ? ELSE approved_by END,notes=notes || ?,updated_at=? WHERE id=?",
+                (next_status,next_paid,condition,timestamp,timestamp if next_status=="Returned" else "",approved_by,approved_by,(" · Return: "+str(notes)[:500]) if notes else "",timestamp,int(loan_id)))
+            restock_qty=Decimal("0") if condition.casefold() in ("damaged","incomplete") or (balance>0 and not clear_balance) else qty
             movement=None
             if restock_qty>0:
                 movement=self.conn.execute("""INSERT INTO stock_movements(product_id,quantity_delta,movement_type,reference_type,reference_id,note,created_at)
