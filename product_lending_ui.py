@@ -213,7 +213,7 @@ class ProductLendingPage(QWidget):
             float(balance), 0.01, float(balance), 2)
         if not ok:
             return
-        method, ok = QInputDialog.getItem(self, "Payment method", "Method:", ["Cash", "M-Pesa", "Bank", "Card"], 0, False)
+        method, ok = QInputDialog.getItem(self, "Payment method", "Method:", ["Cash", "M-Pesa", "Bank transfer", "Card"], 0, False)
         if not ok:
             return
         reference = ""
