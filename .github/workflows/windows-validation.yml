@@ -1,4 +1,9 @@
 name: Windows validation and package
+
+# Avoid building every intermediate commit when a batch of changes is pushed.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 on:
   push:
     branches:
