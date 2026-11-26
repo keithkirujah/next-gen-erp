@@ -853,7 +853,7 @@ class OperationsService:
                 "served_by_code": "TEXT NOT NULL DEFAULT ''",
                 "warranty_period": "TEXT NOT NULL DEFAULT 'N/A'",
                 # Printed invoice date (may differ from system created_at when backdating)
-                "invoice_date": "TEXT NOT NULL DEFAULT '',",
+                "invoice_date": "TEXT NOT NULL DEFAULT '',
                 "credit_due_date": "TEXT NOT NULL DEFAULT '',
             }.items():
                 if column not in sale_cols:
@@ -3432,7 +3432,7 @@ class OperationsService:
                         due=(datetime.fromisoformat(timestamp[:10])+timedelta(days=int(cinfo["credit_days"]))).strftime("%Y-%m-%d")
                     except Exception:
                         due=(datetime.now()+timedelta(days=int(cinfo["credit_days"]))).strftime("%Y-%m-%d")
-                    self.conn.execute("UPDATE sales SET credit_due_date=? WHERE id=?",(due,sale_id)
+                    self.conn.execute("UPDATE sales SET credit_due_date=? WHERE id=?",(due,sale_id))
             self.conn.execute("UPDATE sales SET sale_number=? WHERE id=?",(sale_number,sale_id))
             for (product,qty,price,amount),tax_amount in zip(normalized,line_taxes):
                 line_id=self.conn.execute("INSERT INTO sale_lines(sale_id,product_id,sku,description,quantity,unit_price,line_total,tax_amount) VALUES(?,?,?,?,?,?,?,?)",
