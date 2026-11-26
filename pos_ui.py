@@ -635,7 +635,7 @@ class POSPage(QWidget):
         if QMessageBox.question(self, "Clear cart", "Remove all items from this sale?",
                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
-        self.cart.clear(); self.discount_pct.setValue(0); self.discount_amt.setValue(0)
+        self.cart.clear(); self.customer_id=None; self.customer_name="Walk-in Customer"; self.customer_edit.setText(self.customer_name); self.discount_pct.setValue(0); self.discount_amt.setValue(0)
         self.discount_reason_edit.clear(); self._rebuild_cart_table(); self._refresh_totals()
         self.search_input.setFocus()
 
@@ -749,7 +749,7 @@ class POSPage(QWidget):
         held = self.held_loader()
         held.append({
             "at": __import__("datetime").datetime.now().strftime("%H:%M"),
-            "customer": self.customer_name,
+            "customer": self.customer_name, "customer_id": self.customer_id,
             "discount_percent": str(self.discount_percent), "discount_amount": str(self.discount_amount),
             "discount_reason": self.discount_reason_edit.text().strip(),
             "lines": [{"product_id": l.product_id, "sku": l.sku, "name": l.name,
@@ -768,6 +768,7 @@ class POSPage(QWidget):
             QMessageBox.information(self, "Finish current sale", "Hold or clear before recalling."); return
         ticket = held.pop(); self.held_saver(held)
         self.customer_name = ticket.get("customer") or "Walk-in Customer"
+        self.customer_id = ticket.get("customer_id")
         self.customer_edit.setText(self.customer_name)
         self.cart = [CartLine(int(l["product_id"]), l["sku"], l["name"], Decimal(str(l["unit_price"])),
                               Decimal(str(l["quantity"])), Decimal(str(l.get("stock") or 0)), l.get("serial") or "")
