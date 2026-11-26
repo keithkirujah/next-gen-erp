@@ -4019,7 +4019,7 @@ class App(QMainWindow):
         table.setHorizontalHeaderLabels(["ID","USER","ROLE","ACTION","ENTITY","DETAILS","TIMESTAMP"])
         audit_rows=self.store.operations.conn.execute("SELECT * FROM audit_events ORDER BY id DESC LIMIT 1000").fetchall()
         try:
-            legacy_rows=self.store.conn.execute("SELECT username,action,details,created_at FROM activity ORDER BY id DESC LIMIT 1000").fetchall()
+            legacy_rows=self.store.conn.execute("SELECT username,action,details,created_at FROM activity WHERE workspace_id=? ORDER BY id DESC LIMIT 1000",(self.store.workspace_id or "__global__",)).fetchall()
         except Exception:
             legacy_rows=[]
         rows=[(r["id"],r["username"],r["role"],r["action"],r["entity_type"],r["details"],r["created_at"]) for r in audit_rows]
