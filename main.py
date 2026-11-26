@@ -2516,6 +2516,7 @@ class App(QMainWindow):
             dark=dark,
             user_name=self.display_name or self.username,
             currency=currency,
+            allowed_modules=set(self.nav),
             parent=self,
         )
         view.navigate.connect(self.show_page)
