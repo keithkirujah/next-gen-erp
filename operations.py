@@ -40,7 +40,7 @@ class TaxedLine(tuple):
 
 
 class OperationsService:
-    SCHEMA_VERSION = 21
+    SCHEMA_VERSION = 22
 
     def __init__(self, connection):
         self.conn = connection
@@ -77,7 +77,10 @@ class OperationsService:
                     name TEXT NOT NULL,
                     contact TEXT DEFAULT '',
                     email TEXT DEFAULT '',
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    credit_enabled INTEGER NOT NULL DEFAULT 0,
+                    credit_limit TEXT NOT NULL DEFAULT '0.00',
+                    credit_days INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS suppliers(
                     id INTEGER PRIMARY KEY,
@@ -823,6 +826,20 @@ class OperationsService:
                     UNIQUE(product_id, location_id)
                 );
             """)
+            customer_cols={row[1] for row in self.conn.execute("PRAGMA table_info(customers)").fetchall()}
+            for column, declaration in {
+                "credit_enabled": "INTEGER NOT NULL DEFAULT 0",
+                "credit_limit": "TEXT NOT NULL DEFAULT '0.00'",
+                "credit_days": "INTEGER NOT NULL DEFAULT 0",
+            }.items():
+                if column not in customer_cols:
+                    self.conn.execute(f"ALTER TABLE customers ADD COLUMN {column} {declaration}")
+            self.conn.execute("""CREATE TABLE IF NOT EXISTS audit_events(
+                id INTEGER PRIMARY KEY, username TEXT NOT NULL DEFAULT '', role TEXT NOT NULL DEFAULT '',
+                action TEXT NOT NULL, entity_type TEXT NOT NULL DEFAULT '', entity_id INTEGER,
+                details TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+            )""")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_events_created ON audit_events(created_at,id)")
             prod_cols={row[1] for row in self.conn.execute("PRAGMA table_info(products)").fetchall()}
             if "track_serials" not in prod_cols:
                 self.conn.execute("ALTER TABLE products ADD COLUMN track_serials INTEGER NOT NULL DEFAULT 0")
@@ -950,6 +967,48 @@ class OperationsService:
     def _next_number(prefix, row_id):
         return f"{prefix}-{row_id:08d}"
 
+    def audit_event(self, action, entity_type="", entity_id=None, details=""):
+        """Append-only local audit event; caller may include transactionally."""
+        self.conn.execute("INSERT INTO audit_events(username,role,action,entity_type,entity_id,details,created_at) VALUES(?,?,?,?,?,?,?)",
+            (str(self.actor_username or "system")[:80],str(self.actor_role or "")[:40],str(action)[:100],
+             str(entity_type)[:80],int(entity_id) if entity_id is not None else None,str(details)[:2000],self._stamp()))
+
+    def configure_customer_credit(self, customer_id, enabled=False, limit=0, days=0):
+        self._require("manage_finance")
+        if self.actor_role != "Admin":
+            raise OperationError("Only Admin can configure customer credit facilities.")
+        value=self._decimal(limit,"Credit limit",minimum=Decimal("0"))
+        days=int(days)
+        if days<0 or days>3650: raise OperationError("Credit duration must be between 0 and 3650 days.")
+        customer=self.conn.execute("SELECT id,name FROM customers WHERE id=?",(int(customer_id),)).fetchone()
+        if not customer: raise OperationError("Customer not found.")
+        with self._transaction():
+            self.conn.execute("UPDATE customers SET credit_enabled=?,credit_limit=?,credit_days=? WHERE id=?",
+                (int(bool(enabled)),self._money(value),days,int(customer_id)))
+            self.audit_event("Credit facility updated","customer",customer_id,
+                f"{customer['name']}: enabled={bool(enabled)}, limit KES {self._money(value)}, terms={days} days")
+        return self.customer_credit_summary(customer_id)
+
+    def customer_credit_summary(self, customer_id):
+        customer=self.conn.execute("SELECT * FROM customers WHERE id=?",(int(customer_id),)).fetchone()
+        if not customer: raise OperationError("Customer not found.")
+        outstanding=self.customer_outstanding(customer_id=int(customer_id))
+        limit=Decimal(str(customer["credit_limit"] or "0"))
+        return {"customer_id":int(customer_id),"name":customer["name"],"enabled":bool(customer["credit_enabled"]),
+                "limit":limit,"outstanding":outstanding,"available":max(Decimal("0"),limit-outstanding),
+                "credit_days":int(customer["credit_days"] or 0)}
+
+    def credit_activity_summary(self, customer_id=None, since=None):
+        """Aggregate credit granted, payments and balances for a period start (ISO date)."""
+        clauses=["status='Completed'"]; params=[]
+        if customer_id is not None: clauses.append("customer_id=?"); params.append(int(customer_id))
+        if since: clauses.append("created_at>=?"); params.append(str(since))
+        rows=self.conn.execute(f"SELECT total,paid_total,created_at FROM sales WHERE {' AND '.join(clauses)}",params).fetchall()
+        granted=sum((max(Decimal(str(r["total"]))-Decimal(str(r["paid_total"])),Decimal("0")) for r in rows),Decimal("0"))
+        paidrows=self.conn.execute("SELECT amount,created_at FROM customer_payments WHERE 1=1"+(" AND customer_id=?" if customer_id is not None else "")+(" AND created_at>=?" if since else ""),([int(customer_id)] if customer_id is not None else [])+([str(since)] if since else [])).fetchall()
+        repaid=sum((Decimal(str(r["amount"])) for r in paidrows),Decimal("0"))
+        return {"credit_extended":granted.quantize(Decimal("0.01")),"repaid":repaid.quantize(Decimal("0.01"))}
+
     def create_customer(self, name, contact="", email=""):
         self._require_module("CRM")
         self._require("create")
@@ -961,6 +1020,7 @@ class OperationsService:
             cur=self.conn.execute("INSERT INTO customers(name,contact,email,created_at) VALUES(?,?,?,?)",
                                   (name,str(contact).strip()[:100],str(email).strip()[:160],timestamp))
             self._enqueue("customers",cur.lastrowid,{"id":cur.lastrowid,"name":name,"contact":str(contact).strip()[:100],"email":str(email).strip()[:160]},timestamp)
+            self.audit_event("Customer created","customer",cur.lastrowid,name)
         return cur.lastrowid
 
     def create_supplier(self, name, contact="", email=""):
@@ -3282,6 +3342,17 @@ class OperationsService:
         if not served_by_name:
             served_by_name = str(self.actor_username or "Staff")[:100]
         with self._transaction():
+            if payment_method == "Credit / unpaid":
+                if customer_id is None:
+                    raise OperationError("Credit requires a registered customer with an approved credit facility.")
+                customer_credit=self.conn.execute("SELECT credit_enabled,credit_limit,credit_days FROM customers WHERE id=?",(int(customer_id),)).fetchone()
+                if not customer_credit or not bool(customer_credit["credit_enabled"]):
+                    raise OperationError("This customer has no active credit facility. Ask Admin to enable credit.")
+                outstanding=self.customer_outstanding(customer_id=int(customer_id))
+                new_balance=outstanding+(total-paid)
+                limit=Decimal(str(customer_credit["credit_limit"] or "0"))
+                if new_balance>limit:
+                    raise OperationError(f"Credit limit exceeded. Available KES {max(Decimal('0'),limit-outstanding):.2f}; requested credit KES {(total-paid):.2f}.")
             quote=None
             if quote_id is not None:
                 quote=self.conn.execute("SELECT * FROM quotes WHERE id=?",(int(quote_id),)).fetchone()
@@ -3369,6 +3440,13 @@ class OperationsService:
             if paid:
                 self.conn.execute("INSERT INTO cash_entries(direction,amount,source_type,source_id,description,created_at,payment_method,reference,category) VALUES('in',?,?,?,?,?,?,?,?)",
                     (self._money(paid),"sale",sale_id,f"Payment received for {sale_number}",timestamp,payment_method,payment_reference,"Sales receipt"))
+            self.audit_event("Sale recorded","sale",sale_id,
+                f"{sale_number}; customer={customer_name}; total={self._money(total)}; paid={self._money(paid)}; balance={self._money(total-paid)}")
+            for product,qty,price,amount in normalized:
+                catalog_price=Decimal(str(product["selling_price"] or "0"))
+                if price!=catalog_price:
+                    self.audit_event("Price override","sale",sale_id,
+                        f"{product['sku']} {product['name']}: catalogue KES {self._money(catalog_price)} -> sold KES {self._money(price)}")
             self._enqueue("sales",sale_id,{"id":sale_id,"sale_number":sale_number,"customer_name":customer_name,
                 "status":"Completed","subtotal":self._money(subtotal),"tax_label":tax_label,"tax_rate":self._money(tax_rate),
                 "tax_total":self._money(tax_total),"total":self._money(total),"paid_total":self._money(paid),
