@@ -243,13 +243,9 @@ class ProductLendingPage(QWidget):
             return
         balance = Decimal(row["total_value"]) - Decimal(row["paid_total"])
         approver = ("", "")
-        if balance > 0:
+        if balance > 0 and condition == "Good":
             approver = _manager_credentials(self, self.store, "Approve return and clear balance")
             if not approver:
-                return
-            if condition != "Good":
-                QMessageBox.warning(self, "Inspection required",
-                    "A product not returned in good condition cannot automatically clear the customer's balance. Record the financial settlement separately and investigate the damage.")
                 return
         try:
             self.ops.return_product_loan(loan_id, condition, notes, approver[0], approver[1])
