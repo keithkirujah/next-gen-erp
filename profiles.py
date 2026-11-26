@@ -240,7 +240,7 @@ BUSINESS_PROFILES = {
     ),
     "Wholesale / distribution": BusinessProfile(
         "Wholesale / distribution",
-        ("Sales", "Purchases", "Inventory", "Finance", "CRM", "Reports", "HR & Payroll", "Projects"),
+        ("Sales", "Purchases", "Inventory", "Product Lending", "Finance", "CRM", "Reports", "HR & Payroll", "Projects"),
         {},
         roles=(
             _role("Operations Manager", "Manager", ("Sales", "Purchases", "Inventory", "Finance", "CRM", "Reports", "Projects"), "Ops"),
