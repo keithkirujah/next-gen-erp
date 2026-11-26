@@ -4580,14 +4580,14 @@ class OperationsService:
             if value>due: raise OperationError("Payment cannot exceed the outstanding loan balance.")
             payment_id=self.conn.execute("INSERT INTO product_lending_payments(loan_id,amount,method,reference,received_by,created_at) VALUES(?,?,?,?,?,?)",
                 (int(loan_id),self._money(value),method,reference,self.actor_username,timestamp)).lastrowid
-            paid=Decimal(loan["paid_total"])+value; settled=paid>=Decimal(loan["total_value"])
+            paid=Decimal(loan["paid_total"])+value; settled=(paid+Decimal(loan["waived_total"] or "0"))>=Decimal(loan["total_value"])
             status="Settled" if settled else "Part-paid"
             self.conn.execute("UPDATE product_lending_loans SET paid_total=?,status=?,settled_at=?,updated_at=? WHERE id=?",
                 (self._money(paid),status,timestamp if settled else "",timestamp,int(loan_id)))
             cash_id=self.conn.execute("INSERT INTO cash_entries(direction,amount,source_type,source_id,description,created_at,payment_method,reference,category) VALUES('in',?,'product_lending',?,?,?,?,?,?)",
                 (self._money(value),int(loan_id),f"Product loan payment {loan['loan_number']}",timestamp,method,reference,"Product lending")).lastrowid
             event_id=self.conn.execute("INSERT INTO product_lending_events(loan_id,event,details,actor,created_at) VALUES(?,?,?,?,?)",
-                (int(loan_id),"Payment received",f"KSh {self._money(value)} · balance KSh {self._money(Decimal(loan['total_value'])-paid)}",self.actor_username,timestamp)).lastrowid
+                (int(loan_id),"Payment received",f"KSh {self._money(value)} · balance KSh {self._money(max(Decimal(loan['total_value'])-paid-Decimal(loan['waived_total'] or '0'),Decimal('0')))}",self.actor_username,timestamp)).lastrowid
             self.audit_event("Product loan payment","product_lending",loan_id,f"KSh {self._money(value)} · {method} · {reference}")
             self._enqueue("product_lending_payments",payment_id,{"id":payment_id,"loan_id":int(loan_id),"amount":self._money(value),"method":method,"reference":reference},timestamp)
             self._enqueue("cash_entries",cash_id,{"id":cash_id,"direction":"in","amount":self._money(value),"source_type":"product_lending","source_id":int(loan_id),"payment_method":method,"reference":reference,"category":"Product lending"},timestamp)
