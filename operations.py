@@ -4504,7 +4504,8 @@ class OperationsService:
         staff=self.conn.execute("SELECT username,role,lending_limit,active FROM systemdb.users WHERE username=? COLLATE NOCASE",(self.actor_username,)).fetchone()
         if not staff or not staff["active"]: raise OperationError("The issuing employee account could not be verified.")
         staff_limit=Decimal(str(staff["lending_limit"] or "0.00"))
-        approved_by=""
+        approved_by=self.actor_username if staff["role"] in ("Manager","Admin") else ""
+        if staff["role"] in ("Manager","Admin"): staff_limit=Decimal("999999999.99")
         if total>staff_limit:
             if not approving_username: raise OperationError(f"This transaction exceeds your KSh {staff_limit:,.2f} lending authority. Manager/Admin approval is required.")
             approver=self.conn.execute("SELECT username,role,active FROM systemdb.users WHERE username=? COLLATE NOCASE",(str(approving_username),)).fetchone()
@@ -4591,12 +4592,16 @@ class OperationsService:
             qty=Decimal(loan["quantity"])
             self.conn.execute("UPDATE product_lending_loans SET status='Returned',paid_total=total_value,condition_in=?,returned_at=?,settled_at=?,approved_by=CASE WHEN ?<>'' THEN ? ELSE approved_by END,notes=notes || ?,updated_at=? WHERE id=?",
                 (condition,timestamp,timestamp,approved_by,approved_by,(" · Return: "+str(notes)[:500]) if notes else "",timestamp,int(loan_id)))
-            movement=self.conn.execute("""INSERT INTO stock_movements(product_id,quantity_delta,movement_type,reference_type,reference_id,note,created_at)
-                VALUES(?,?,'product_loan_return','product_lending',?,?,?)""",
-                (int(loan["product_id"]),self._quantity(qty),int(loan_id),f"Returned loan {loan['loan_number']} · {condition}",timestamp)).lastrowid
+            restock_qty=Decimal("0") if condition.casefold() in ("damaged","incomplete") else qty
+            movement=None
+            if restock_qty>0:
+                movement=self.conn.execute("""INSERT INTO stock_movements(product_id,quantity_delta,movement_type,reference_type,reference_id,note,created_at)
+                    VALUES(?,?,'product_loan_return','product_lending',?,?,?)""",
+                    (int(loan["product_id"]),self._quantity(restock_qty),int(loan_id),f"Returned loan {loan['loan_number']} · {condition}",timestamp)).lastrowid
             self.conn.execute("INSERT INTO product_lending_events(loan_id,event,details,actor,created_at) VALUES(?,?,?,?,?)",
-                (int(loan_id),"Product returned",condition+" · "+str(notes)[:500]+(" · balance cleared by "+approved_by if approved_by else ""),self.actor_username,timestamp))
+                (int(loan_id),"Product returned",condition+" · "+str(notes)[:500]+(" · balance cleared by "+approved_by if approved_by else "")+(" · quarantined; not returned to sellable stock" if restock_qty==0 else ""),self.actor_username,timestamp))
             self.audit_event("Product loan returned","product_lending",loan_id,condition+("; remaining balance "+self._money(balance)+" cleared by "+approved_by if approved_by else ""))
             self._enqueue("product_lending_loans",int(loan_id),{"id":int(loan_id),"status":"Returned","condition_in":condition,"returned_at":timestamp},timestamp)
-            self._enqueue("stock_movements",movement,{"id":movement,"product_id":int(loan["product_id"]),"quantity_delta":self._quantity(qty),"reference_type":"product_lending","reference_id":int(loan_id)},timestamp)
+            if movement is not None:
+                self._enqueue("stock_movements",movement,{"id":movement,"product_id":int(loan["product_id"]),"quantity_delta":self._quantity(restock_qty),"reference_type":"product_lending","reference_id":int(loan_id)},timestamp)
         return True
