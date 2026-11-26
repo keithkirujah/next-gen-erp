@@ -417,7 +417,7 @@ def profile_role_module_map(profile_name: str) -> dict[str, list[str]]:
 WORKSPACE_NAV_ORDER = (
     "Point of Sale",
     "Returns Desk",
-    "Sales", "Purchases", "Inventory", "Finance", "CRM",
+    "Sales", "Purchases", "Inventory", "Product Lending", "Finance", "CRM",
     "Repair Tickets", "Reports", "HR & Payroll", "Projects",
     "Students & Enrolment", "Fees & Billing", "Classes & Timetable", "Library",
     "Appointments", "Batches & Expiry", "Menu & Recipes",
