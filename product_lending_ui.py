@@ -118,7 +118,7 @@ class ProductLendingPage(QWidget):
             rows = self.ops.product_lending_records()
             self.table.setRowCount(len(rows))
             for i, row in enumerate(rows):
-                balance = max(Decimal(row["total_value"]) - Decimal(row["paid_total"]), Decimal("0"))
+                balance = max(Decimal(row["total_value"]) - Decimal(row["paid_total"]) - Decimal(row["waived_total"] or "0") - Decimal(row["waived_total"] or "0"), Decimal("0"))
                 values = [
                     row["loan_number"], row["customer_name"], row["product_name"],
                     row["quantity"], f"KSh {Decimal(row['total_value']):,.2f}",
