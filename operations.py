@@ -995,9 +995,10 @@ class OperationsService:
         return self.customer_credit_summary(customer_id)
 
     def customer_credit_summary(self, customer_id):
+        self._ensure_product_lending_schema()
         customer=self.conn.execute("SELECT * FROM customers WHERE id=?",(int(customer_id),)).fetchone()
         if not customer: raise OperationError("Customer not found.")
-        outstanding=self.customer_outstanding(customer_id=int(customer_id))
+        outstanding=self.product_lending_customer_exposure(customer_id=int(customer_id))
         limit=Decimal(str(customer["credit_limit"] or "0"))
         return {"customer_id":int(customer_id),"name":customer["name"],"enabled":bool(customer["credit_enabled"]),
                 "limit":limit,"outstanding":outstanding,"available":max(Decimal("0"),limit-outstanding),
@@ -3359,6 +3360,8 @@ class OperationsService:
         served_by_code=str(served_by_code or "").strip()[:40]
         if not served_by_name:
             served_by_name = str(self.actor_username or "Staff")[:100]
+        if payment_method == "Credit / unpaid":
+            self._ensure_product_lending_schema()
         with self._transaction():
             if payment_method == "Credit / unpaid":
                 if customer_id is None:
@@ -3366,7 +3369,7 @@ class OperationsService:
                 customer_credit=self.conn.execute("SELECT credit_enabled,credit_limit,credit_days FROM customers WHERE id=?",(int(customer_id),)).fetchone()
                 if not customer_credit or not bool(customer_credit["credit_enabled"]):
                     raise OperationError("This customer has no active credit facility. Ask Admin to enable credit.")
-                outstanding=self.customer_outstanding(customer_id=int(customer_id))
+                outstanding=self.product_lending_customer_exposure(customer_id=int(customer_id))
                 new_balance=outstanding+(total-paid)
                 limit=Decimal(str(customer_credit["credit_limit"] or "0"))
                 if new_balance>limit:
