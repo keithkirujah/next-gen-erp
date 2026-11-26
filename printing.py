@@ -101,14 +101,14 @@ class PrintSettings:
     def effective_layout(self) -> str:
         """Pick receipt vs full invoice HTML from paper + explicit override.
 
-        Rules (owner can still force either layout in Printer setup):
-        * layout == "receipt"  → always compact receipt
-        * layout == "document" → always full invoice / quotation sheet
-        * layout == "auto":
-            - receipt-roll paper (58/76/80 mm) or continuous custom → receipt
-            - any standard sheet (A4, Letter, A5, …) or fixed custom sheet → document
-            - only a very narrow fixed custom width (usable ≤ 90 mm) falls back to receipt
+        Rules:
+        * thermal/continuous rolls always use a compact receipt layout, regardless of
+          a stale saved document override.
+        * sheet paper respects an explicit receipt/document choice.
+        * automatic mode chooses receipt for narrow custom paper and document for sheets.
         """
+        if self.is_roll:
+            return "receipt"
         if self.layout == "receipt":
             return "receipt"
         if self.layout == "document":
