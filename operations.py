@@ -4467,16 +4467,17 @@ class OperationsService:
             );
         """)
     def product_lending_summary(self):
-        self._require_any_module(("CRM","Inventory","Sales"))
+        self._require_module("Product Lending")
         self._ensure_product_lending_schema()
-        rows=self.conn.execute("SELECT total_value,paid_total,status FROM product_lending_loans WHERE status NOT IN ('Cancelled','Returned','Settled','Converted to sale')").fetchall()
+        rows=self.conn.execute("SELECT total_value,paid_total,CASE WHEN status IN ('On loan','Part-paid') AND due_date<date('now','localtime') THEN 'Overdue' ELSE status END AS status FROM product_lending_loans WHERE status NOT IN ('Cancelled','Returned','Settled','Converted to sale')").fetchall()
         outstanding=sum((max(Decimal(r["total_value"])-Decimal(r["paid_total"]),Decimal("0")) for r in rows),Decimal("0.00"))
         return {"active":len(rows),"outstanding":outstanding.quantize(Decimal("0.01")),
                 "overdue":sum(1 for r in rows if r["status"]=="Overdue")}
     def product_lending_records(self, limit=1000):
-        self._require_any_module(("CRM","Inventory","Sales"))
+        self._require_module("Product Lending")
         self._ensure_product_lending_schema()
-        return self.conn.execute("""SELECT l.*,c.name customer_name,p.sku,p.name product_name,p.unit
+        return self.conn.execute("""SELECT l.*,c.name customer_name,p.sku,p.name product_name,p.unit,
+            CASE WHEN l.status IN ('On loan','Part-paid') AND l.due_date<date('now','localtime') THEN 'Overdue' ELSE l.status END AS status
             FROM product_lending_loans l JOIN customers c ON c.id=l.customer_id
             JOIN products p ON p.id=l.product_id ORDER BY l.id DESC LIMIT ?""",(max(1,min(int(limit),5000)),)).fetchall()
     def product_lending_customer_exposure(self, customer_id):
@@ -4488,7 +4489,7 @@ class OperationsService:
         return (sales+loans).quantize(Decimal("0.01"))
     def issue_product_loan(self, customer_id, product_id, quantity, due_date, condition_out="",
                            serial_number="", notes="", approving_username="", approving_password=""):
-        self._require_module("Inventory"); self._require("create")
+        self._require_module("Product Lending"); self._require("create")
         self._ensure_product_lending_schema()
         qty=self._decimal(quantity,"Quantity",minimum=Decimal("0.001"),places=3)
         due=self._iso_date(due_date,"Due date")
@@ -4541,7 +4542,7 @@ class OperationsService:
             self._enqueue("stock_movements",movement,{"id":movement,"product_id":int(product_id),"quantity_delta":self._quantity(-qty),"reference_type":"product_lending","reference_id":loan_id},timestamp)
         return loan_id
     def record_product_loan_payment(self, loan_id, amount, method="Cash", reference=""):
-        self._require_module("Finance"); self._require("manage_finance")
+        self._require_module("Product Lending"); self._require("manage_finance")
         self._ensure_product_lending_schema()
         value=self._decimal(amount,"Payment",minimum=Decimal("0.01"))
         method=self._payment_method(method); reference=str(reference or "").strip()[:120]
@@ -4567,7 +4568,7 @@ class OperationsService:
             self._enqueue("product_lending_loans",int(loan_id),{"id":int(loan_id),"paid_total":self._money(paid),"status":status},timestamp)
         return payment_id
     def return_product_loan(self, loan_id, condition_in, notes="", approving_username="", approving_password=""):
-        self._require_module("Inventory"); self._require("process_returns")
+        self._require_module("Product Lending"); self._require("process_returns")
         self._ensure_product_lending_schema()
         condition=str(condition_in or "").strip()[:300]
         if not condition: raise OperationError("Record the returned product's condition before accepting it.")
