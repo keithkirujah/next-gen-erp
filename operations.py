@@ -999,6 +999,15 @@ class OperationsService:
                 "limit":limit,"outstanding":outstanding,"available":max(Decimal("0"),limit-outstanding),
                 "credit_days":int(customer["credit_days"] or 0)}
 
+    def customer_overdue_balance(self, customer_id=None):
+        """Balance on credit sales past their configured due date."""
+        today=datetime.now().strftime("%Y-%m-%d")
+        clauses=["status='Completed'","credit_due_date<>''","credit_due_date<?"];params=[today]
+        if customer_id is not None: clauses.append("customer_id=?");params.append(int(customer_id))
+        rows=self.conn.execute(f"SELECT total,paid_total FROM sales WHERE {' AND '.join(clauses)}",params).fetchall()
+        total=sum((max(Decimal(str(r["total"]))-Decimal(str(r["paid_total"])),Decimal("0")) for r in rows),Decimal("0"))
+        return total.quantize(Decimal("0.01"))
+
     def credit_activity_summary(self, customer_id=None, since=None):
         """Aggregate credit granted, payments and balances for a period start (ISO date)."""
         clauses=["status='Completed'"]; params=[]
@@ -3427,7 +3436,7 @@ class OperationsService:
             credit_balance=max(Decimal("0.00"),total-paid)
             if credit_balance>0 and customer_id is not None:
                 cinfo=self.conn.execute("SELECT credit_enabled,credit_days FROM customers WHERE id=?",(int(customer_id),)).fetchone()
-                if cinfo and bool(cinfo["credit_enabled"]) and int(cinfo["credit_days"] or 0)>0:
+                if cinfo and bool(cinfo["credit_enabled"]) and int(cinfo["credit_days"] or 0)>=0:
                     try:
                         due=(datetime.fromisoformat(timestamp[:10])+timedelta(days=int(cinfo["credit_days"]))).strftime("%Y-%m-%d")
                     except Exception:
