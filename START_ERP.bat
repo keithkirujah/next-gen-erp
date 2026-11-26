@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 title NextGen ERP Desktop
 
@@ -32,7 +32,7 @@ if not exist "%PYEXE%" (
     pause
     exit /b 1
   )
-  %BASEPY% -m venv "%VENV%"
+  !BASEPY! -m venv "%VENV%"
   if errorlevel 1 (
     echo ERROR: Could not create the ERP virtual environment.
     pause
