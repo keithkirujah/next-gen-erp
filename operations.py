@@ -4504,6 +4504,8 @@ class OperationsService:
         self._ensure_product_lending_schema()
         qty=self._decimal(quantity,"Quantity",minimum=Decimal("0.001"),places=3)
         due=self._iso_date(due_date,"Due date")
+        if due<datetime.now().strftime("%Y-%m-%d"):
+            raise OperationError("The due date cannot be in the past.")
         timestamp=self._stamp()
         customer=self.conn.execute("SELECT * FROM customers WHERE id=?",(int(customer_id),)).fetchone()
         product=self.conn.execute("SELECT * FROM products WHERE id=? AND active=1",(int(product_id),)).fetchone()
@@ -4512,6 +4514,11 @@ class OperationsService:
         stock=self.stock_on_hand(int(product_id))
         if qty>stock: raise OperationError(f"Insufficient stock. Available: {self._quantity(stock)} {product['unit']}.")
         value=Decimal(str(product["selling_price"])); total=(qty*value).quantize(Decimal("0.01"))
+        if total<=0: raise OperationError("A product must have a positive selling value before it can be issued on loan.")
+        serial=str(serial_number or "").strip()[:100]
+        if serial:
+            duplicate=self.conn.execute("SELECT loan_number FROM product_lending_loans WHERE serial_number=? COLLATE NOCASE AND status IN ('On loan','Part-paid','Overdue') LIMIT 1",(serial,)).fetchone()
+            if duplicate: raise OperationError(f"Serial / IMEI {serial} is already on active loan {duplicate['loan_number']}.")
         staff=self.conn.execute("SELECT username,role,lending_limit,active FROM systemdb.users WHERE username=? COLLATE NOCASE",(self.actor_username,)).fetchone()
         if not staff or not staff["active"]: raise OperationError("The issuing employee account could not be verified.")
         staff_limit=Decimal(str(staff["lending_limit"] or "0.00"))
@@ -4540,7 +4547,7 @@ class OperationsService:
                 paid_total,status,serial_number,condition_out,issue_date,due_date,issued_by,approved_by,notes,created_at,updated_at)
                 VALUES('PENDING',?,?,?,?,?,'0.00','On loan',?,?,?,?,?,?,?, ?,?)""",
                 (int(customer_id),int(product_id),self._quantity(qty),self._money(value),self._money(total),
-                 str(serial_number or "")[:100],str(condition_out or "")[:300],timestamp[:10],due,
+                 serial,str(condition_out or "")[:300],timestamp[:10],due,
                  self.actor_username,approved_by,str(notes or "")[:1000],timestamp,timestamp))
             loan_id=cur.lastrowid; number=self._next_number("PL",loan_id)
             self.conn.execute("UPDATE product_lending_loans SET loan_number=? WHERE id=?",(number,loan_id))
