@@ -2156,8 +2156,30 @@ class App(QMainWindow):
                ("Set daily sales goal","goal target pulse",("call",self.set_daily_goal)),
                ("Open or close shift (Z-report)","shift till cash drawer z report float",("call",self.shift_action)),
                ("Open log folder","log support help",("call",lambda:QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_dir(APP_DIR))))))]
-        if "Point of Sale" in self.nav: extra.insert(0,("New sale — Point of Sale","pos checkout till sell",("page","Point of Sale")))
-        if "Reports" in self.nav: extra.append(("Report centre — export CSV / print","reports export csv profit tax debtors",("page","Reports")))
+        # Task-first aliases make the palette useful even when users do not
+        # remember the module name. They only point to destinations the current
+        # role is already authorised to open.
+        workflow_aliases = [
+            ("Start a sale", "checkout till cash receipt sell transaction", "Point of Sale"),
+            ("Register a customer", "new customer add client contact CRM", "CRM"),
+            ("Receive stock / supplier delivery", "stock intake purchase supplier goods", "Purchases"),
+            ("Add or edit products", "product catalogue SKU stock inventory", "Inventory"),
+            ("Record an expense", "expense cash out payment finance cashbook", "Finance"),
+            ("Create an invoice / sales record", "invoice quotation sales receipt", "Sales"),
+            ("Open repair intake", "repair ticket service job laptop phone", "Repair Tickets"),
+            ("Issue products on credit", "lend loan credit customer staff product", "Product Lending"),
+            ("View business reports", "report centre export CSV print profit tax", "Reports"),
+            ("Manage appointments", "booking schedule calendar appointment", "Appointments"),
+            ("Manage returns", "refund exchange returned goods", "Returns Desk"),
+        ]
+        for label, keywords, target_page in workflow_aliases:
+            if target_page in self.nav:
+                extra.append((label, keywords, ("page", target_page)))
+        # Preserve the dedicated POS and report shortcuts for quick scanning.
+        if "Point of Sale" in self.nav:
+            extra.insert(0,("New sale — Point of Sale","pos checkout till sell",("page","Point of Sale")))
+        if "Reports" in self.nav:
+            extra.append(("Report centre — export CSV / print","reports export csv profit tax debtors",("page","Reports")))
         dlg=CommandPalette(self,extra+items,themed_style(self.palette)); dlg.exec()
         if dlg.chosen:
             kind,target=dlg.chosen
