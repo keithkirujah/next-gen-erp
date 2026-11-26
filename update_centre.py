@@ -5,7 +5,8 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushBu
 from PySide6.QtCore import QTimer
 
 CURRENT_VERSION = "2.0.0-dev"
-MAX_PACKAGE_BYTES = 250 * 1024 * 1024\nMAX_UNPACKED_BYTES = 500 * 1024 * 1024
+MAX_PACKAGE_BYTES = 250 * 1024 * 1024
+MAX_UNPACKED_BYTES = 500 * 1024 * 1024
 SAFE_ROOTS = {"assets", "profiles", "ui", "modules"}
 SAFE_EXTS = {".py", ".json", ".svg", ".png", ".ico", ".bat", ".md"}
 PROTECTED = {"nextgen_erp.db", "settings.json"}
@@ -19,6 +20,11 @@ def inspect_package(package):
     package=Path(package)
     if package.stat().st_size>MAX_PACKAGE_BYTES: raise ValueError("Package exceeds 250 MB limit.")
     with zipfile.ZipFile(package) as z:
+        infos = z.infolist()
+        if sum(info.file_size for info in infos) > MAX_UNPACKED_BYTES:
+            raise ValueError('Package expands beyond the 500 MB safety limit.')
+        if any(info.file_size > MAX_UNPACKED_BYTES for info in infos):
+            raise ValueError('A package entry exceeds the unpacked safety limit.')
         names=z.namelist()
         if "update_manifest.json" not in names: raise ValueError("Missing update_manifest.json.")
         manifest=json.loads(z.read("update_manifest.json").decode("utf-8"))
