@@ -82,7 +82,7 @@ class UpdateCentreDialog(QDialog):
                 cmd += ["mkdir "+_quote(dst.parent),"mkdir "+_quote(bak.parent),"if exist "+_quote(dst)+" copy /y "+_quote(dst)+" "+_quote(bak)+" >nul","if not exist "+_quote(dst)+" echo new>"+_quote(str(staging/(str(len(cmd))+".new")))]
             for src,dst,bak in pairs: cmd += ["copy /y "+_quote(src)+" "+_quote(dst)+" >nul","if errorlevel 1 goto rollback"]
             cmd += ["start \"\" "+_quote(self.launcher),"goto done",":rollback"]
-            for index,(src,dst,bak) in enumerate(pairs): cmd += ["if exist "+_quote(bak)+" copy /y "+_quote(bak)+" "+_quote(dst)+" >nul","if exist "+_quote(str(staging/(str(index)+".new"))+" del "+_quote(dst)]
+            for index,(src,dst,bak) in enumerate(pairs):\n                marker=staging/(str(index)+".new")\n                cmd += ["if exist "+_quote(bak)+" copy /y "+_quote(bak)+" "+_quote(dst)+" >nul","if exist "+_quote(marker)+" del "+_quote(dst)]
             cmd += ["echo Install failed; rollback attempted.>>"+_quote(staging/"update.log"),":done","endlocal"]
             script=staging/"apply_update.cmd"; script.write_text("\r\n".join(cmd),encoding="utf-8")
             subprocess.Popen(["cmd.exe","/c","start","",str(script)],creationflags=getattr(subprocess,"CREATE_NEW_CONSOLE",0))
