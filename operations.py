@@ -3866,6 +3866,8 @@ class OperationsService:
                 (new_status,self._money(net_subtotal),self._money(net_tax),self._money(net_total),self._money(net_paid),self._payment_status(net_total,net_paid),int(sale_id)))
             self._enqueue("sales_returns",return_id,{"id":return_id,"return_number":return_number,"sale_id":int(sale_id),"refund_amount":self._money(refund_total),"reason":str(reason).strip()[:300],"payment_method":payment_method,"payment_reference":payment_reference,"lines":[{"sale_line_id":line_id,"quantity":self._quantity(qty),"restocked":restock} for line_id,(qty,restock) in requested.items()]},timestamp)
             self._enqueue("sales",int(sale_id),{"id":int(sale_id),"sale_number":sale["sale_number"],"status":new_status},timestamp)
+            self.audit_event("Sale return processed","sale_return",return_id,
+                f"Sale {sale['sale_number']}; refund KES {self._money(refund_total)}; reason={str(reason).strip()[:300]}")
         return return_id
 
     def returned_quantity(self, sale_line_id):
