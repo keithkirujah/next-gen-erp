@@ -2558,23 +2558,33 @@ class App(QMainWindow):
         table.verticalHeader().setDefaultSectionSize(40)
         table.horizontalHeader().setHighlightSections(False)
         table.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        # Interactive sizing avoids costly ResizeToContents scans across large datasets.
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         table.horizontalHeader().setStretchLastSection(True)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         return table
 
     def _fill_table(self, table, rows, values, record_id_key="id", hide_id=False):
-        table.setRowCount(len(rows))
-        for row_index,row in enumerate(rows):
-            row_values=values(row)
-            for col,value in enumerate(row_values):
-                item=QTableWidgetItem(str(value))
-                if col == 0 and record_id_key in row.keys():
-                    item.setData(Qt.UserRole,int(row[record_id_key]))
-                table.setItem(row_index,col,item)
-        if hide_id:
-            table.setColumnHidden(0,True)
+        # Batch population: defer repainting and sorting while creating cells.
+        table.setUpdatesEnabled(False)
+        sorting = table.isSortingEnabled()
+        table.setSortingEnabled(False)
+        try:
+            table.setRowCount(len(rows))
+            for row_index,row in enumerate(rows):
+                row_values=values(row)
+                for col,value in enumerate(row_values):
+                    item=QTableWidgetItem(str(value))
+                    if col == 0 and record_id_key in row.keys():
+                        item.setData(Qt.UserRole,int(row[record_id_key]))
+                    table.setItem(row_index,col,item)
+            if hide_id:
+                table.setColumnHidden(0,True)
+        finally:
+            table.setSortingEnabled(sorting)
+            table.setUpdatesEnabled(True)
+            table.viewport().update()
 
     def _selected_table_id(self, table):
         row=table.currentRow()
