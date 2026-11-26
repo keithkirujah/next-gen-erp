@@ -988,6 +988,8 @@ class OperationsService:
                 (int(bool(enabled)),self._money(value),days,int(customer_id)))
             self.audit_event("Credit facility updated","customer",customer_id,
                 f"{customer['name']}: enabled={bool(enabled)}, limit KES {self._money(value)}, terms={days} days")
+            self._enqueue("customers",int(customer_id),{"id":int(customer_id),"credit_enabled":bool(enabled),
+                "credit_limit":self._money(value),"credit_days":days},self._stamp())
         return self.customer_credit_summary(customer_id)
 
     def customer_credit_summary(self, customer_id):
@@ -3473,7 +3475,7 @@ class OperationsService:
             self._enqueue("sales",sale_id,{"id":sale_id,"sale_number":sale_number,"customer_name":customer_name,
                 "status":"Completed","subtotal":self._money(subtotal),"tax_label":tax_label,"tax_rate":self._money(tax_rate),
                 "tax_total":self._money(tax_total),"total":self._money(total),"paid_total":self._money(paid),
-                "payment_method":payment_method,"payment_reference":payment_reference,"quote_id":quote_id,
+                "payment_method":payment_method,"payment_reference":payment_reference,"quote_id":quote_id,"credit_due_date":str((self.conn.execute("SELECT credit_due_date FROM sales WHERE id=?",(sale_id,)).fetchone() or [''])[0]),
                 "created_by":str(self.actor_username or ""),"served_by_name":served_by_name,
                 "served_by_code":served_by_code,"warranty_period":warranty_period,
                 "lines":[{"product_id":p["id"],"sku":p["sku"],"quantity":self._quantity(q),"unit_price":self._money(price),"line_total":self._money(amount),"tax_amount":self._money(tax)} for (p,q,price,amount),tax in zip(normalized,line_taxes)]},timestamp)
