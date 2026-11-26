@@ -853,8 +853,8 @@ class OperationsService:
                 "served_by_code": "TEXT NOT NULL DEFAULT ''",
                 "warranty_period": "TEXT NOT NULL DEFAULT 'N/A'",
                 # Printed invoice date (may differ from system created_at when backdating)
-                "invoice_date": "TEXT NOT NULL DEFAULT '',",
-                "credit_due_date": "TEXT NOT NULL DEFAULT '',",
+                "invoice_date": "TEXT NOT NULL DEFAULT '',
+                "credit_due_date": "TEXT NOT NULL DEFAULT '',
             }.items():
                 if column not in sale_cols:
                     self.conn.execute(f"ALTER TABLE sales ADD COLUMN {column} {declaration}")
