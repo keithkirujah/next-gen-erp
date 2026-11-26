@@ -4547,11 +4547,12 @@ class OperationsService:
             movement=self.conn.execute("""INSERT INTO stock_movements(product_id,quantity_delta,movement_type,reference_type,reference_id,note,created_at)
                 VALUES(?,?,'product_loan_issue','product_lending',?,?,?)""",
                 (int(product_id),self._quantity(-qty),loan_id,f"Issued to {customer['name']} · {number}",timestamp)).lastrowid
-            self.conn.execute("INSERT INTO product_lending_events(loan_id,event,details,actor,created_at) VALUES(?,?,?,?,?)",
-                (loan_id,"Product issued",f"{number} · {product['name']} · {self._quantity(qty)} · KSh {self._money(total)}",self.actor_username,timestamp))
+            event_id=self.conn.execute("INSERT INTO product_lending_events(loan_id,event,details,actor,created_at) VALUES(?,?,?,?,?)",
+                (loan_id,"Product issued",f"{number} · {product['name']} · {self._quantity(qty)} · KSh {self._money(total)}",self.actor_username,timestamp)).lastrowid
             self.audit_event("Product loan issued","product_lending",loan_id,f"{number}; customer={customer['name']}; staff={self.actor_username}; approver={approved_by}; value={self._money(total)}")
             self._enqueue("product_lending_loans",loan_id,{"id":loan_id,"loan_number":number,"customer_id":int(customer_id),"product_id":int(product_id),
                 "quantity":self._quantity(qty),"total_value":self._money(total),"status":"On loan","issued_by":self.actor_username,"approved_by":approved_by},timestamp)
+            self._enqueue("product_lending_events",event_id,{"id":event_id,"loan_id":loan_id,"event":"Product issued","actor":self.actor_username},timestamp)
             self._enqueue("stock_movements",movement,{"id":movement,"product_id":int(product_id),"quantity_delta":self._quantity(-qty),"reference_type":"product_lending","reference_id":loan_id},timestamp)
         return loan_id
     def record_product_loan_payment(self, loan_id, amount, method="Cash", reference=""):
@@ -4572,12 +4573,14 @@ class OperationsService:
             status="Settled" if settled else "Part-paid"
             self.conn.execute("UPDATE product_lending_loans SET paid_total=?,status=?,settled_at=?,updated_at=? WHERE id=?",
                 (self._money(paid),status,timestamp if settled else "",timestamp,int(loan_id)))
-            self.conn.execute("INSERT INTO cash_entries(direction,amount,source_type,source_id,description,created_at,payment_method,reference,category) VALUES('in',?,'product_lending',?,?,?,?,?,?)",
-                (self._money(value),int(loan_id),f"Product loan payment {loan['loan_number']}",timestamp,method,reference,"Product lending"))
-            self.conn.execute("INSERT INTO product_lending_events(loan_id,event,details,actor,created_at) VALUES(?,?,?,?,?)",
-                (int(loan_id),"Payment received",f"KSh {self._money(value)} · balance KSh {self._money(Decimal(loan['total_value'])-paid)}",self.actor_username,timestamp))
+            cash_id=self.conn.execute("INSERT INTO cash_entries(direction,amount,source_type,source_id,description,created_at,payment_method,reference,category) VALUES('in',?,'product_lending',?,?,?,?,?,?)",
+                (self._money(value),int(loan_id),f"Product loan payment {loan['loan_number']}",timestamp,method,reference,"Product lending")).lastrowid
+            event_id=self.conn.execute("INSERT INTO product_lending_events(loan_id,event,details,actor,created_at) VALUES(?,?,?,?,?)",
+                (int(loan_id),"Payment received",f"KSh {self._money(value)} · balance KSh {self._money(Decimal(loan['total_value'])-paid)}",self.actor_username,timestamp)).lastrowid
             self.audit_event("Product loan payment","product_lending",loan_id,f"KSh {self._money(value)} · {method} · {reference}")
             self._enqueue("product_lending_payments",payment_id,{"id":payment_id,"loan_id":int(loan_id),"amount":self._money(value),"method":method,"reference":reference},timestamp)
+            self._enqueue("cash_entries",cash_id,{"id":cash_id,"direction":"in","amount":self._money(value),"source_type":"product_lending","source_id":int(loan_id),"payment_method":method,"reference":reference,"category":"Product lending"},timestamp)
+            self._enqueue("product_lending_events",event_id,{"id":event_id,"loan_id":int(loan_id),"event":"Payment received","actor":self.actor_username},timestamp)
             self._enqueue("product_lending_loans",int(loan_id),{"id":int(loan_id),"paid_total":self._money(paid),"status":status},timestamp)
         return payment_id
     def return_product_loan(self, loan_id, condition_in, notes="", approving_username="", approving_password=""):
@@ -4595,15 +4598,18 @@ class OperationsService:
             approved_by=""
             clear_balance=(balance>0 and condition.casefold()=="good")
             if clear_balance:
-                approver=self.conn.execute("SELECT username,role,active,password_hash FROM systemdb.users WHERE username=? COLLATE NOCASE",(str(approving_username),)).fetchone()
-                valid=False
-                if approver and approver["active"] and self._lending_manager_role(approver["role"]) and approver["username"].casefold()!=self.actor_username.casefold():
-                    try:
-                        salt,digest=str(approver["password_hash"]).split(":",1)
-                        valid=secrets.compare_digest(hashlib.pbkdf2_hmac("sha256",str(approving_password).encode(),bytes.fromhex(salt),240000).hex(),digest)
-                    except Exception: valid=False
-                if not valid: raise OperationError("A verified Manager/Admin must authorise clearing the remaining balance when accepting a returned product.")
-                approved_by=approver["username"]
+                if self._lending_manager_role(self.actor_role):
+                    approved_by=self.actor_username
+                else:
+                    approver=self.conn.execute("SELECT username,role,active,password_hash FROM systemdb.users WHERE username=? COLLATE NOCASE",(str(approving_username),)).fetchone()
+                    valid=False
+                    if approver and approver["active"] and self._lending_manager_role(approver["role"]) and approver["username"].casefold()!=self.actor_username.casefold():
+                        try:
+                            salt,digest=str(approver["password_hash"]).split(":",1)
+                            valid=secrets.compare_digest(hashlib.pbkdf2_hmac("sha256",str(approving_password).encode(),bytes.fromhex(salt),240000).hex(),digest)
+                        except Exception: valid=False
+                    if not valid: raise OperationError("A verified Manager/Admin must authorise clearing the remaining balance when accepting a returned product.")
+                    approved_by=approver["username"]
             qty=Decimal(loan["quantity"])
             next_status="Returned" if balance==0 or clear_balance else "Part-paid"
             next_paid=loan["total_value"] if clear_balance else loan["paid_total"]
@@ -4615,10 +4621,11 @@ class OperationsService:
                 movement=self.conn.execute("""INSERT INTO stock_movements(product_id,quantity_delta,movement_type,reference_type,reference_id,note,created_at)
                     VALUES(?,?,'product_loan_return','product_lending',?,?,?)""",
                     (int(loan["product_id"]),self._quantity(restock_qty),int(loan_id),f"Returned loan {loan['loan_number']} · {condition}",timestamp)).lastrowid
-            self.conn.execute("INSERT INTO product_lending_events(loan_id,event,details,actor,created_at) VALUES(?,?,?,?,?)",
-                (int(loan_id),"Product returned",condition+" · "+str(notes)[:500]+(" · balance cleared by "+approved_by if approved_by else "")+(" · quarantined; not returned to sellable stock" if restock_qty==0 else ""),self.actor_username,timestamp))
+            event_id=self.conn.execute("INSERT INTO product_lending_events(loan_id,event,details,actor,created_at) VALUES(?,?,?,?,?)",
+                (int(loan_id),"Product returned",condition+" · "+str(notes)[:500]+(" · balance cleared by "+approved_by if approved_by else "")+(" · quarantined; not returned to sellable stock" if restock_qty==0 else ""),self.actor_username,timestamp)).lastrowid
             self.audit_event("Product loan returned","product_lending",loan_id,condition+("; remaining balance "+self._money(balance)+" cleared by "+approved_by if approved_by else ""))
-            self._enqueue("product_lending_loans",int(loan_id),{"id":int(loan_id),"status":"Returned","condition_in":condition,"returned_at":timestamp},timestamp)
+            self._enqueue("product_lending_loans",int(loan_id),{"id":int(loan_id),"status":next_status,"paid_total":next_paid,"condition_in":condition,"returned_at":timestamp,"approved_by":approved_by},timestamp)
+            self._enqueue("product_lending_events",event_id,{"id":event_id,"loan_id":int(loan_id),"event":"Product returned","actor":self.actor_username},timestamp)
             if movement is not None:
                 self._enqueue("stock_movements",movement,{"id":movement,"product_id":int(loan["product_id"]),"quantity_delta":self._quantity(restock_qty),"reference_type":"product_lending","reference_id":int(loan_id)},timestamp)
         return True
