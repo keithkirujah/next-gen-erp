@@ -756,7 +756,7 @@ class POSPage(QWidget):
                        "unit_price": str(l.unit_price), "quantity": str(l.quantity),
                        "stock": str(l.stock), "serial": l.serial} for l in self.cart],
         })
-        self.held_saver(held); self.cart.clear(); self.discount_pct.setValue(0); self.discount_amt.setValue(0)
+        self.held_saver(held); self.cart.clear(); self.customer_id=None; self.customer_name="Walk-in Customer"; self.customer_edit.setText(self.customer_name); self.discount_pct.setValue(0); self.discount_amt.setValue(0)
         self.discount_reason_edit.clear(); self._rebuild_cart_table(); self._refresh_totals()
         self.btn_recall.setText(f"Recall ({len(held)})  F7"); self.search_input.setFocus()
 
