@@ -4422,6 +4422,15 @@ class OperationsService:
     # ------------------------------------------------------------------
     # Product lending — temporary issue of shop-owned stock to customers
     # ------------------------------------------------------------------
+    def _lending_manager_role(self, role):
+        if str(role) in ("Manager","Admin"):
+            return True
+        try:
+            caps=set(self.permission_provider(str(role)))
+            return {"manage_users","manage_finance"}.issubset(caps)
+        except Exception:
+            return False
+
     def _ensure_product_lending_schema(self):
         self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS product_lending_loans(
@@ -4506,12 +4515,13 @@ class OperationsService:
         staff=self.conn.execute("SELECT username,role,lending_limit,active FROM systemdb.users WHERE username=? COLLATE NOCASE",(self.actor_username,)).fetchone()
         if not staff or not staff["active"]: raise OperationError("The issuing employee account could not be verified.")
         staff_limit=Decimal(str(staff["lending_limit"] or "0.00"))
-        approved_by=self.actor_username if staff["role"] in ("Manager","Admin") else ""
-        if staff["role"] in ("Manager","Admin"): staff_limit=Decimal("999999999.99")
+        is_manager=self._lending_manager_role(staff["role"])
+        approved_by=self.actor_username if is_manager else ""
+        if is_manager: staff_limit=Decimal("999999999.99")
         if total>staff_limit:
             if not approving_username: raise OperationError(f"This transaction exceeds your KSh {staff_limit:,.2f} lending authority. Manager/Admin approval is required.")
             approver=self.conn.execute("SELECT username,role,active FROM systemdb.users WHERE username=? COLLATE NOCASE",(str(approving_username),)).fetchone()
-            if not approver or not approver["active"] or approver["role"] not in ("Manager","Admin") or approver["username"].casefold()==self.actor_username.casefold():
+            if not approver or not approver["active"] or not self._lending_manager_role(approver["role"]) or approver["username"].casefold()==self.actor_username.casefold():
                 raise OperationError("A different active Manager/Admin account must approve this transaction.")
             try:
                 saved=self.conn.execute("SELECT password_hash FROM systemdb.users WHERE username=? COLLATE NOCASE",(approver["username"],)).fetchone()[0]
@@ -4587,7 +4597,7 @@ class OperationsService:
             if clear_balance:
                 approver=self.conn.execute("SELECT username,role,active,password_hash FROM systemdb.users WHERE username=? COLLATE NOCASE",(str(approving_username),)).fetchone()
                 valid=False
-                if approver and approver["active"] and approver["role"] in ("Manager","Admin") and approver["username"].casefold()!=self.actor_username.casefold():
+                if approver and approver["active"] and self._lending_manager_role(approver["role"]) and approver["username"].casefold()!=self.actor_username.casefold():
                     try:
                         salt,digest=str(approver["password_hash"]).split(":",1)
                         valid=secrets.compare_digest(hashlib.pbkdf2_hmac("sha256",str(approving_password).encode(),bytes.fromhex(salt),240000).hex(),digest)
