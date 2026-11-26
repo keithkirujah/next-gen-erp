@@ -3,17 +3,14 @@
   <linearGradient id="rim" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#35F1D2"/><stop offset=".42" stop-color="#238BFF"/><stop offset="1" stop-color="#8B35FF"/></linearGradient>
   <linearGradient id="ribbon" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#7444FF"/><stop offset=".48" stop-color="#168DFF"/><stop offset="1" stop-color="#37F2D0"/></linearGradient>
   <linearGradient id="bars" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#1763FF"/><stop offset="1" stop-color="#36F3D2"/></linearGradient>
-  <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur in="SourceAlpha" stdDeviation="12"/><feOffset dy="9"/><feComponentTransfer><feFuncA type="linear" slope=".28"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>
  </defs>
- <g filter="url(#shadow)">
-  <path d="M256 24 436 119 488 210 488 328 436 393 256 488 76 393 24 302 24 184 76 119Z" fill="#09142F" stroke="url(#rim)" stroke-width="17" stroke-linejoin="round"/>
-  <path d="M87 344V165L131 135 232 224 294 278 382 161 430 121V342L382 386 294 332 191 258 135 304V383Z" fill="url(#ribbon)" stroke="#B9FFF6" stroke-opacity=".5" stroke-width="4" stroke-linejoin="round"/>
-  <path d="M322 161 430 121 430 230 394 196 320 295 286 267Z" fill="#3BEBD4"/>
-  <rect x="178" y="145" width="31" height="74" rx="7" fill="url(#bars)" opacity=".95"/>
-  <rect x="222" y="108" width="31" height="111" rx="7" fill="url(#bars)" opacity=".95"/>
-  <rect x="266" y="76" width="31" height="143" rx="7" fill="url(#bars)" opacity=".95"/>
-  <path d="M184 380h145v44H184z" fill="#09142F" stroke="#29E7D0" stroke-width="7" stroke-linejoin="round"/>
-  <path d="M204 380 215 355h85l13 25" fill="none" stroke="#29E7D0" stroke-width="12" stroke-linecap="round"/>
-  <path d="M220 392h63l-10 12h-45z" fill="#268BFF"/><circle cx="228" cy="434" r="9" fill="#2DE9D3"/><circle cx="284" cy="434" r="9" fill="#2DE9D3"/>
- </g>
+ <path d="M256 24 436 119 488 210 488 328 436 393 256 488 76 393 24 302 24 184 76 119Z" fill="#09142F" stroke="url(#rim)" stroke-width="17" stroke-linejoin="round"/>
+ <path d="M87 344V165L131 135 232 224 294 278 382 161 430 121V342L382 386 294 332 191 258 135 304V383Z" fill="url(#ribbon)" stroke="#B9FFF6" stroke-opacity=".5" stroke-width="4" stroke-linejoin="round"/>
+ <path d="M322 161 430 121 430 230 394 196 320 295 286 267Z" fill="#3BEBD4"/>
+ <rect x="178" y="145" width="31" height="74" rx="7" fill="url(#bars)" opacity=".95"/>
+ <rect x="222" y="108" width="31" height="111" rx="7" fill="url(#bars)" opacity=".95"/>
+ <rect x="266" y="76" width="31" height="143" rx="7" fill="url(#bars)" opacity=".95"/>
+ <path d="M322 380h145v44H322z" fill="#09142F" stroke="#29E7D0" stroke-width="7" stroke-linejoin="round" transform="translate(-138 0)"/>
+ <path d="M204 380 215 355h85l13 25" fill="none" stroke="#29E7D0" stroke-width="12" stroke-linecap="round"/>
+ <path d="M220 392h63l-10 12h-45z" fill="#268BFF"/><circle cx="228" cy="434" r="9" fill="#2DE9D3"/><circle cx="284" cy="434" r="9" fill="#2DE9D3"/>
 </svg>
