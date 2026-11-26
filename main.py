@@ -5983,6 +5983,20 @@ class App(QMainWindow):
         if not self._authorize('configure'):
             return
         w,v=self.page_container("Business & System Settings","Personalize the ERP for your organization. Settings are saved on this computer.")
+        product_brand = QHBoxLayout()
+        product_mark = QLabel()
+        product_mark.setFixedSize(42, 42)
+        product_asset = Path(__file__).resolve().parent / "assets" / "nextgen-erp-mark.svg"
+        if product_asset.exists():
+            product_pixmap = QPixmap(str(product_asset))
+            if not product_pixmap.isNull():
+                product_mark.setPixmap(product_pixmap.scaled(38, 38, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        product_brand.addWidget(product_mark)
+        product_identity = QVBoxLayout()
+        product_identity.addWidget(QLabel("<b>NextGen ERP</b>"))
+        product_identity.addWidget(QLabel("<span style='font-size:8pt'>PRODUCT BRANDING · BUSINESS CONFIGURATION</span>"))
+        product_brand.addLayout(product_identity, 1)
+        v.addLayout(product_brand)
         business=self.panel(); bf=QFormLayout(business); bf.setContentsMargins(24,24,24,24); bf.setSpacing(16); bf.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         company=QLineEdit(self.store.setting("business_name", "")); company.setPlaceholderText("e.g. Acme Enterprises Ltd")
         tagline=QLineEdit(self.store.setting("business_tagline", "")); tagline.setPlaceholderText("A short description of your business")
