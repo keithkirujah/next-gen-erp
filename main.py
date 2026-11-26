@@ -35,6 +35,7 @@ import urllib.error
 from pos_ui import POSPage
 from returns_ui import ReturnsPage
 from product_lending_ui import ProductLendingPage
+from onboarding_tour import show_guided_tour
 
 POS_UNAVAILABLE_PROFILES = frozenset({"School / training centre", "Professional services"})
 
@@ -2051,6 +2052,7 @@ class App(QMainWindow):
         self.syncpill.setToolTip("Backup status — click to open Database and Backup")
         self.syncpill.clicked.connect(lambda:self.show_page("Database and Backup") if self._can_open_backup_page() else self.backups.run_now("manual") if "backup" in self.store.role_permissions(self.role) else None)
         th.addWidget(self.syncpill)
+        self.tour_btn=QPushButton("✦  Guided tour"); self.tour_btn.setToolTip("Replay the interactive NextGen ERP walkthrough"); self.tour_btn.clicked.connect(lambda:show_guided_tour(self, first_run=False)); th.addWidget(self.tour_btn)
         self.profile_chip=QLabel(f"  {self.display_name}  ·  {role}  "); self.profile_chip.setStyleSheet(f"font-weight:700;padding:7px 12px;background:{self.palette['panel2']};border:1px solid {self.palette['border']};border-radius:999px;color:{self.palette['text']};"); th.addWidget(self.profile_chip)
         out=QPushButton("Sign out"); out.clicked.connect(self.sign_out); th.addWidget(out)
         rv.addWidget(top)
@@ -2066,6 +2068,8 @@ class App(QMainWindow):
         self.refresh_syncpill()
         self.show_page("Dashboard")
         self.showMaximized()
+        if self.store.setting("onboarding_tour_completed", "0") != "1":
+            QTimer.singleShot(1100, lambda: show_guided_tour(self, first_run=True) if self.isVisible() else None)
         self.timer=QTimer(self); self.timer.timeout.connect(self.refresh_syncpill); self.timer.start(8000)
         self.backups.start()
     def closeEvent(self,event):
