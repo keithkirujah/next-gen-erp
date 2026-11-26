@@ -2072,7 +2072,7 @@ class App(QMainWindow):
         self.showMaximized()
         if self.store.setting("onboarding_tour_completed", "0") != "1":
             QTimer.singleShot(1100, lambda: show_guided_tour(self, first_run=True) if self.isVisible() else None)
-        self.timer=QTimer(self); self.timer.timeout.connect(self.refresh_syncpill); self.timer.start(8000)
+        self.timer=QTimer(self); self.timer.timeout.connect(self.refresh_syncpill); self.timer.start(30000)
         self.backups.start()
     def closeEvent(self,event):
         timer=getattr(self,"timer",None)
