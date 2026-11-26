@@ -4469,7 +4469,7 @@ class OperationsService:
     def product_lending_summary(self):
         self._require_module("Product Lending")
         self._ensure_product_lending_schema()
-        rows=self.conn.execute("SELECT total_value,paid_total,CASE WHEN status IN ('On loan','Part-paid') AND due_date<date('now','localtime') THEN 'Overdue' ELSE status END AS status FROM product_lending_loans WHERE status NOT IN ('Cancelled','Returned','Settled','Converted to sale')").fetchall()
+        rows=self.conn.execute("SELECT total_value,paid_total,CASE WHEN returned_at<>'' AND status='Part-paid' THEN 'Returned · balance due' WHEN status IN ('On loan','Part-paid') AND returned_at='' AND due_date<date('now','localtime') THEN 'Overdue' ELSE status END AS status FROM product_lending_loans WHERE status NOT IN ('Cancelled','Returned','Settled','Converted to sale')").fetchall()
         outstanding=sum((max(Decimal(r["total_value"])-Decimal(r["paid_total"]),Decimal("0")) for r in rows),Decimal("0.00"))
         return {"active":len(rows),"outstanding":outstanding.quantize(Decimal("0.01")),
                 "overdue":sum(1 for r in rows if r["status"]=="Overdue")}
@@ -4477,7 +4477,7 @@ class OperationsService:
         self._require_module("Product Lending")
         self._ensure_product_lending_schema()
         return self.conn.execute("""SELECT l.*,c.name customer_name,p.sku,p.name product_name,p.unit,
-            CASE WHEN l.status IN ('On loan','Part-paid') AND l.due_date<date('now','localtime') THEN 'Overdue' ELSE l.status END AS status
+            CASE WHEN l.returned_at<>'' AND l.status='Part-paid' THEN 'Returned · balance due' WHEN l.status IN ('On loan','Part-paid') AND l.returned_at='' AND l.due_date<date('now','localtime') THEN 'Overdue' ELSE l.status END AS status
             FROM product_lending_loans l JOIN customers c ON c.id=l.customer_id
             JOIN products p ON p.id=l.product_id ORDER BY l.id DESC LIMIT ?""",(max(1,min(int(limit),5000)),)).fetchall()
     def product_lending_customer_exposure(self, customer_id):
