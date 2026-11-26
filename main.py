@@ -6472,36 +6472,26 @@ class App(QMainWindow):
                     widget.blockSignals(signals)
 
     def refresh_appearance(self):
-        pending=dict(getattr(self,"_pending_theme_states",{}))
-        # The painted dashboard swaps palette in place: no rebuild, no intro replay, no recap pop-up.
-        keep={n:p for n,p in self.pages.items() if hasattr(p,"apply_palette")}
-        for name,page in self.pages.items():
-            if name not in keep:
-                pending[name]=self._capture_page_state(page)
-        self._pending_theme_states=pending
-        self.palette=palette_for(self.store, self.theme)
+        # Recolour existing widgets and preserve page instances: avoids expensive
+        # teardown/rebuild and restores the exact current workspace on theme changes.
+        self.palette=palette_for(self.store,self.theme)
         stylesheet=themed_style(self.palette)
         self.setStyleSheet(stylesheet)
         QApplication.instance().setStyleSheet(stylesheet)
         self.sidebar.setStyleSheet(f"background:{self.palette['sidebar']};border-right:1px solid {self.palette['border']};")
         self.topbar.setStyleSheet(f"background:{self.palette['sidebar']};border-bottom:1px solid {self.palette['border']};")
-        self.theme_btn.setText("☀ Light mode" if self.theme == "dark" else "☾ Dark mode")
-        if hasattr(self, "profile_chip"):
+        self.theme_btn.setText("☀ Light mode" if self.theme=="dark" else "☾ Dark mode")
+        if hasattr(self,"profile_chip"):
             self.profile_chip.setStyleSheet(
                 f"font-weight:700;padding:7px 12px;background:{self.palette['panel2']};"
                 f"border:1px solid {self.palette['border']};border-radius:999px;color:{self.palette['text']};"
             )
         self.update_branding()
+        for page in self.pages.values():
+            if hasattr(page,"apply_palette"):
+                page.apply_palette(self.palette,self.theme=="dark")
         active=self.active
         self.rebuild_nav()
-        for page in keep.values():
-            page.apply_palette(self.palette, self.theme=="dark")
-        for name,page in list(self.pages.items()):
-            if name in keep:
-                continue
-            self.stack.removeWidget(page)
-            page.deleteLater()
-        self.pages=dict(keep)
         self.show_page(active)
         self.refresh_syncpill()
 
