@@ -5739,13 +5739,18 @@ class App(QMainWindow):
             return
         subtitle = "Manage Staff and Manager accounts." if self.role != "Admin" else "Manage local accounts, status and credentials. Administrator accounts are only visible to Admin."
         w,v=self.page_container("User Management", subtitle)
-        actions=QHBoxLayout()
-        btn=QPushButton("＋ Add user"); btn.setObjectName("primary"); btn.clicked.connect(self.add_user); actions.addWidget(btn)
-        toggle=QPushButton("Enable / disable selected"); toggle.clicked.connect(self.toggle_selected_user); actions.addWidget(toggle)
-        reset=QPushButton("Reset selected password"); reset.clicked.connect(self.reset_selected_user_password); actions.addWidget(reset)
-        delete=QPushButton("Delete selected permanently"); delete.clicked.connect(self.delete_selected_user); actions.addWidget(delete)
-        lending=QPushButton("Set lending authority"); lending.clicked.connect(self.set_selected_lending_authority); actions.addWidget(lending)
-        actions.addStretch(); v.addLayout(actions)
+        actions=QGridLayout()
+        actions.setHorizontalSpacing(10); actions.setVerticalSpacing(8)
+        btn=QPushButton("＋ Add user"); btn.setObjectName("primary"); btn.clicked.connect(self.add_user); actions.addWidget(btn,0,0)
+        toggle=QPushButton("Enable / disable selected"); toggle.clicked.connect(self.toggle_selected_user); actions.addWidget(toggle,0,1)
+        reset=QPushButton("Reset selected password"); reset.clicked.connect(self.reset_selected_user_password); actions.addWidget(reset,0,2)
+        delete=QPushButton("Delete selected permanently"); delete.clicked.connect(self.delete_selected_user); actions.addWidget(delete,1,0)
+        lending=QPushButton("💳 Set lending authority"); lending.setToolTip("Set the maximum value this selected employee may approve per product-lending transaction."); lending.clicked.connect(self.set_selected_lending_authority); actions.addWidget(lending,1,1)
+        actions.setColumnStretch(0,1); actions.setColumnStretch(1,1); actions.setColumnStretch(2,1)
+        v.addLayout(actions)
+        authority_hint=QLabel("Select an employee in the table, then choose Set lending authority to assign their per-transaction approval ceiling.")
+        authority_hint.setWordWrap(True); authority_hint.setStyleSheet(f"color:{self.palette['muted']};padding:4px 0;")
+        v.addWidget(authority_hint)
         table=self._table(["ID","USERNAME","DISPLAY NAME","EMPLOYEE CODE","ROLE","LENDING AUTHORITY (KES)","ACTIVE"])
         # Managers never see Admin accounts — only Admin can view/manage administrators
         if self.role == "Admin":
