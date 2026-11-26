@@ -4595,7 +4595,7 @@ class OperationsService:
             self._enqueue("product_lending_loans",int(loan_id),{"id":int(loan_id),"paid_total":self._money(paid),"status":status},timestamp)
         return payment_id
     def return_product_loan(self, loan_id, condition_in, notes="", approving_username="", approving_password=""):
-        self._require_module("Product Lending"); self._require("process_returns")
+        self._require_module("Product Lending"); self._require("edit")
         self._ensure_product_lending_schema()
         condition=str(condition_in or "").strip()[:300]
         if not condition: raise OperationError("Record the returned product's condition before accepting it.")
