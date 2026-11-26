@@ -6,7 +6,7 @@ import json
 import csv
 import re
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 def _as_dict(row):
@@ -853,7 +853,8 @@ class OperationsService:
                 "served_by_code": "TEXT NOT NULL DEFAULT ''",
                 "warranty_period": "TEXT NOT NULL DEFAULT 'N/A'",
                 # Printed invoice date (may differ from system created_at when backdating)
-                "invoice_date": "TEXT NOT NULL DEFAULT ''",
+                "invoice_date": "TEXT NOT NULL DEFAULT '',",
+                "credit_due_date": "TEXT NOT NULL DEFAULT '',
             }.items():
                 if column not in sale_cols:
                     self.conn.execute(f"ALTER TABLE sales ADD COLUMN {column} {declaration}")
@@ -3380,7 +3381,7 @@ class OperationsService:
             if paid>total:
                 raise OperationError("Amount paid cannot exceed the sale total including tax.")
             if customer_id is not None:
-                customer=self.conn.execute("SELECT name FROM customers WHERE id=?",(int(customer_id),)).fetchone()
+                customer=self.conn.execute("SELECT name,credit_enabled,credit_limit,credit_days FROM customers WHERE id=?",(int(customer_id),)).fetchone()
                 if not customer:
                     raise OperationError("The selected customer no longer exists.")
                 customer_name=customer["name"]
@@ -3423,6 +3424,15 @@ class OperationsService:
                  served_by_name, served_by_code, warranty_period))
             sale_id=cur.lastrowid
             sale_number=self._next_number("SALE",sale_id)
+            credit_balance=max(Decimal("0.00"),total-paid)
+            if credit_balance>0 and customer_id is not None:
+                cinfo=self.conn.execute("SELECT credit_enabled,credit_days FROM customers WHERE id=?",(int(customer_id),)).fetchone()
+                if cinfo and bool(cinfo["credit_enabled"]) and int(cinfo["credit_days"] or 0)>0:
+                    try:
+                        due=(datetime.fromisoformat(timestamp[:10])+timedelta(days=int(cinfo["credit_days"]))).strftime("%Y-%m-%d")
+                    except Exception:
+                        due=(datetime.now()+timedelta(days=int(cinfo["credit_days"]))).strftime("%Y-%m-%d")
+                    self.conn.execute("UPDATE sales SET credit_due_date=? WHERE id=?",(due,sale_id)
             self.conn.execute("UPDATE sales SET sale_number=? WHERE id=?",(sale_number,sale_id))
             for (product,qty,price,amount),tax_amount in zip(normalized,line_taxes):
                 line_id=self.conn.execute("INSERT INTO sale_lines(sale_id,product_id,sku,description,quantity,unit_price,line_total,tax_amount) VALUES(?,?,?,?,?,?,?,?)",
