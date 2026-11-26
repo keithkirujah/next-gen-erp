@@ -7,7 +7,10 @@ The Experience Upgrade is designed around the following non-negotiable product p
 - Continuous decorative animation is disabled by default. One-shot transitions are also disabled by default so page changes and checkout remain immediate on low-spec computers.
 - Avoid per-widget graphics effects, animated shadows, blur, and large image assets in the primary workflows.
 - Use Qt-native widgets and painting; no embedded browser, web runtime, or large UI framework.
-- Keep dashboard refreshes on demand or at a modest cadence, and pause background refresh/motion while the app is inactive.
+- Dashboard refreshes are capped at a two-minute cadence while visible and stop when the dashboard is hidden.
+- Dashboard quick actions are filtered to workspaces present in the user's navigation permissions.
+- Avoid decorative painter loops and keep the background static; the gradient field is painted only when needed.
+- Tables use interactive header sizing (not full ResizeToContents scans) and batch cell population with painting/sorting suspended.
 - Load optional modules and heavy reports only when opened; preserve the current workspace and avoid rebuilding it during theme changes.
 - Keep SQLite transactions short, indexes aligned to common searches, and paginate/limit long lists rather than loading entire histories into UI tables.
 - Protect offline operation: no required network call during launch, login, POS, inventory, repairs, lending, or finance workflows.
