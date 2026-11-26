@@ -398,6 +398,7 @@ class POSPage(QWidget):
         self.cart_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.cart_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.cart_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.cart_table.cellDoubleClicked.connect(self._edit_cart_price)
         self.cart_table.verticalHeader().setVisible(False)
         right.addWidget(self.cart_table, 2)
 
@@ -589,6 +590,35 @@ class POSPage(QWidget):
             btn = QPushButton("X"); btn.setFixedWidth(34); btn.setObjectName("danger")
             btn.clicked.connect(lambda checked=False, i=idx: self._remove_line(i))
             self.cart_table.setCellWidget(idx, 5, btn)
+
+    def _edit_cart_price(self, row: int, column: int):
+        if column != 2 or not (0 <= row < len(self.cart)):
+            return
+        role=str(getattr(self.ops,"actor_role","Staff"))
+        if role not in {"Admin","Manager"}:
+            QMessageBox.information(self,"Price editing restricted","Only Admin or Manager accounts can override item prices.")
+            return
+        line=self.cart[row]
+        new_price,ok=QInputDialog.getDouble(self,"Override unit price",
+            f"{line.name}\nCurrent: {self.currency} {line.unit_price:.2f}\nEnter negotiated selling price:",
+            float(line.unit_price),0,100000000,2)
+        if not ok or Decimal(str(new_price)).quantize(Decimal("0.01"))==line.unit_price:
+            return
+        reason,ok=QInputDialog.getText(self,"Price override reason","Reason (customer negotiation, promotion, damaged box, etc.):")
+        if not ok or not reason.strip():
+            QMessageBox.warning(self,"Reason required","A reason is required for price overrides.")
+            return
+        old=line.unit_price
+        line.unit_price=Decimal(str(new_price)).quantize(Decimal("0.01"))
+        try:
+            with self.ops._transaction():
+                self.ops.audit_event("POS price override","cart",None,
+                    f"{line.sku} {line.name}: {self.currency} {old:.2f} -> {self.currency} {line.unit_price:.2f}; reason: {reason.strip()}")
+        except Exception:
+            line.unit_price=old
+            QMessageBox.warning(self,"Audit failure","The override could not be recorded; price was restored.")
+            return
+        self._rebuild_cart_table(); self._refresh_totals()
 
     def _remove_line(self, index: int):
         if 0 <= index < len(self.cart):
