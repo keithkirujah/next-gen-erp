@@ -34,3 +34,13 @@ Use **Database & Backup** for full package export/import. See `SECURITY_AND_DATA
 - Windows launcher creates a local `.venv`, so unrelated global Python packages and their dependency warnings do not affect the ERP.
 
 **Development branch:** `feature/retail-super-upgrades`. This is not yet merged to `main`; test on a copied database before adopting it.
+
+
+## Product Lending Centre
+- Temporary product issues are tracked separately from POS credit sales.
+- Each loan records the registered customer, product, quantity, issue/due dates, condition, serial/IMEI where applicable, issuing employee and approval identity.
+- Staff lending authority is configured per employee in **User Management** and applies per transaction. A transaction above that authority requires a different active Manager/Admin account and password verification.
+- The customer's existing credit facility is the shared exposure ceiling across unpaid sales and active product loans. A manager override does not bypass the customer's credit limit.
+- Partial repayments are recorded to the cashbook. A fully paid loan can be closed by receiving the product or by the customer keeping it as a purchase.
+- A good-condition return that clears an unpaid balance requires Manager/Admin approval. Damaged or incomplete returns are recorded without returning the item to sellable stock; any remaining balance stays on the customer's account.
+- Loan issue/return stock movements, payments, approvals and audit events are stored locally and queued for sync when the system's sync service is configured.
