@@ -5,6 +5,8 @@ import sqlite3
 import json
 import csv
 import re
+import hashlib
+import secrets
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -4485,7 +4487,7 @@ class OperationsService:
         loans=sum((max(Decimal(r["total_value"])-Decimal(r["paid_total"]),Decimal("0")) for r in rows),Decimal("0.00"))
         return (sales+loans).quantize(Decimal("0.01"))
     def issue_product_loan(self, customer_id, product_id, quantity, due_date, condition_out="",
-                           serial_number="", notes="", approving_username=""):
+                           serial_number="", notes="", approving_username="", approving_password=""):
         self._require_module("Inventory"); self._require("create")
         self._ensure_product_lending_schema()
         qty=self._decimal(quantity,"Quantity",minimum=Decimal("0.001"),places=3)
@@ -4507,6 +4509,13 @@ class OperationsService:
             approver=self.conn.execute("SELECT username,role,active FROM systemdb.users WHERE username=? COLLATE NOCASE",(str(approving_username),)).fetchone()
             if not approver or not approver["active"] or approver["role"] not in ("Manager","Admin") or approver["username"].casefold()==self.actor_username.casefold():
                 raise OperationError("A different active Manager/Admin account must approve this transaction.")
+            try:
+                saved=self.conn.execute("SELECT password_hash FROM systemdb.users WHERE username=? COLLATE NOCASE",(approver["username"],)).fetchone()[0]
+                salt,digest=str(saved).split(":",1)
+                valid=secrets.compare_digest(hashlib.pbkdf2_hmac("sha256",str(approving_password).encode(),bytes.fromhex(salt),240000).hex(),digest)
+            except Exception:
+                valid=False
+            if not valid: raise OperationError("Manager/Admin credentials were not verified. The lending override was rejected.")
             approved_by=approver["username"]
         with self._transaction():
             exposure=self.product_lending_customer_exposure(int(customer_id))
@@ -4557,7 +4566,7 @@ class OperationsService:
             self._enqueue("product_lending_payments",payment_id,{"id":payment_id,"loan_id":int(loan_id),"amount":self._money(value),"method":method,"reference":reference},timestamp)
             self._enqueue("product_lending_loans",int(loan_id),{"id":int(loan_id),"paid_total":self._money(paid),"status":status},timestamp)
         return payment_id
-    def return_product_loan(self, loan_id, condition_in, notes=""):
+    def return_product_loan(self, loan_id, condition_in, notes="", approving_username="", approving_password=""):
         self._require_module("Inventory"); self._require("process_returns")
         self._ensure_product_lending_schema()
         condition=str(condition_in or "").strip()[:300]
@@ -4567,16 +4576,26 @@ class OperationsService:
             loan=self.conn.execute("SELECT * FROM product_lending_loans WHERE id=?",(int(loan_id),)).fetchone()
             if not loan or loan["status"] not in ("On loan","Part-paid","Overdue"): raise OperationError("This loan is not open for return.")
             balance=Decimal(loan["total_value"])-Decimal(loan["paid_total"])
-            if balance>0: raise OperationError("This loan still has a financial balance. Record payment or an approved damage/settlement adjustment before closing it.")
+            approved_by=""
+            if balance>0:
+                approver=self.conn.execute("SELECT username,role,active,password_hash FROM systemdb.users WHERE username=? COLLATE NOCASE",(str(approving_username),)).fetchone()
+                valid=False
+                if approver and approver["active"] and approver["role"] in ("Manager","Admin") and approver["username"].casefold()!=self.actor_username.casefold():
+                    try:
+                        salt,digest=str(approver["password_hash"]).split(":",1)
+                        valid=secrets.compare_digest(hashlib.pbkdf2_hmac("sha256",str(approving_password).encode(),bytes.fromhex(salt),240000).hex(),digest)
+                    except Exception: valid=False
+                if not valid: raise OperationError("A verified Manager/Admin must authorise clearing the remaining balance when accepting a returned product.")
+                approved_by=approver["username"]
             qty=Decimal(loan["quantity"])
-            self.conn.execute("UPDATE product_lending_loans SET status='Returned',condition_in=?,returned_at=?,settled_at=?,notes=notes || ?,updated_at=? WHERE id=?",
-                (condition,timestamp,timestamp,(" · Return: "+str(notes)[:500]) if notes else "",timestamp,int(loan_id)))
+            self.conn.execute("UPDATE product_lending_loans SET status='Returned',paid_total=total_value,condition_in=?,returned_at=?,settled_at=?,approved_by=CASE WHEN ?<>'' THEN ? ELSE approved_by END,notes=notes || ?,updated_at=? WHERE id=?",
+                (condition,timestamp,timestamp,approved_by,approved_by,(" · Return: "+str(notes)[:500]) if notes else "",timestamp,int(loan_id)))
             movement=self.conn.execute("""INSERT INTO stock_movements(product_id,quantity_delta,movement_type,reference_type,reference_id,note,created_at)
                 VALUES(?,?,'product_loan_return','product_lending',?,?,?)""",
                 (int(loan["product_id"]),self._quantity(qty),int(loan_id),f"Returned loan {loan['loan_number']} · {condition}",timestamp)).lastrowid
             self.conn.execute("INSERT INTO product_lending_events(loan_id,event,details,actor,created_at) VALUES(?,?,?,?,?)",
-                (int(loan_id),"Product returned",condition+" · "+str(notes)[:500],self.actor_username,timestamp))
-            self.audit_event("Product loan returned","product_lending",loan_id,condition)
+                (int(loan_id),"Product returned",condition+" · "+str(notes)[:500]+(" · balance cleared by "+approved_by if approved_by else ""),self.actor_username,timestamp))
+            self.audit_event("Product loan returned","product_lending",loan_id,condition+("; remaining balance "+self._money(balance)+" cleared by "+approved_by if approved_by else ""))
             self._enqueue("product_lending_loans",int(loan_id),{"id":int(loan_id),"status":"Returned","condition_in":condition,"returned_at":timestamp},timestamp)
             self._enqueue("stock_movements",movement,{"id":movement,"product_id":int(loan["product_id"]),"quantity_delta":self._quantity(qty),"reference_type":"product_lending","reference_id":int(loan_id)},timestamp)
         return True
