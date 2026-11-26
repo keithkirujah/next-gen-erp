@@ -30,7 +30,7 @@ class Motion:
     * continuous  — looping pulses / live dashboard ticks (off by default)
     * effects     — QGraphicsDropShadow hover glows (off by default; costly on weak GPUs)
     """
-    enabled = True
+    enabled = False  # Instant interactions by default; visual polish must not tax low-spec tills.
     continuous = False
     effects = False
 
