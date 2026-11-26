@@ -2063,6 +2063,7 @@ class App(QMainWindow):
         self.backups=BackupManager(self.store,self.toast,parent=self)
         self.backups.state_changed.connect(self.refresh_syncpill)
         QShortcut(QKeySequence("Ctrl+K"),self,self.open_palette)
+        QShortcut(QKeySequence("Ctrl+F"),self,lambda:self.search.setFocus())
         QShortcut(QKeySequence("Ctrl+L"),self,self.lock_screen)
         self.idle_watcher=IdleWatcher(lambda:self.store.setting("idle_lock_minutes","10"),self)
         self.idle_watcher.idle.connect(self.lock_screen)
@@ -2148,8 +2149,9 @@ class App(QMainWindow):
     # ------------------------------------------------------------------ Command palette
     def open_palette(self):
         if getattr(self,"_locked",False): return
-        items=[(f"Go to {name}",name.lower(),("page",name)) for name in self.nav]
-        extra=[("Back up now","backup save data",("call",lambda:self.backups.run_now("manual"))),
+        items=[("Go to Dashboard","overview home pulse",("page","Dashboard"))]+[(f"Go to {name}",name.lower(),("page",name)) for name in self.nav]
+        extra=[("Find records","search customer product invoice repair stock",("call",lambda:self.search.setFocus())),
+               ("Back up now","backup save data",("call",lambda:self.backups.run_now("manual"))),
                ("Printer setup","print paper receipt thermal",("call",self.open_printer_setup)),
                ("Lock screen","lock secure away",("call",self.lock_screen)),
                ("Switch light / dark theme","theme colour dark light",("call",self.toggle_theme)),
