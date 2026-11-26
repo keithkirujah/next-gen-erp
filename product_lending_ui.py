@@ -23,8 +23,10 @@ def _manager_credentials(parent, store, title):
         "SELECT username,role,password_hash,active FROM users WHERE username=? COLLATE NOCASE",
         (username.strip(),)
     ).fetchone()
-    if not row or not row["active"] or row["role"] not in ("Manager", "Admin"):
-        QMessageBox.warning(parent, title, "An active Manager/Admin account is required.")
+    caps = set(store.role_permissions(row["role"])) if row else set()
+    manager_role = bool(row and (row["role"] in ("Manager", "Admin") or {"manage_users", "manage_finance"}.issubset(caps)))
+    if not row or not row["active"] or not manager_role:
+        QMessageBox.warning(parent, title, "An active Manager/Admin-authorised account is required.")
         return None
     try:
         salt, digest = str(row["password_hash"]).split(":", 1)
@@ -184,7 +186,7 @@ class ProductLendingPage(QWidget):
         user = self.store.conn.execute("SELECT lending_limit FROM users WHERE username=? COLLATE NOCASE",
                                        (self.window.username,)).fetchone()
         limit = Decimal(str(user["lending_limit"] or "0")) if user else Decimal("0")
-        if amount > limit and self.window.role not in ("Manager", "Admin"):
+        if amount > limit and not (self.window.role in ("Manager", "Admin") or {"manage_users", "manage_finance"}.issubset(set(self.store.role_permissions(self.window.role)))):
             approver = _manager_credentials(self, self.store, "Manager approval required")
             if not approver:
                 return
